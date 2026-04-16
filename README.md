@@ -2,7 +2,7 @@
 
 **Setup profissional do Claude Code em um comando — para devs e criadores brasileiros.**
 
-> Por [Tadeu Rosa](https://github.com/tadeurosa) · CC BY-NC-ND 4.0
+> Por [Tadeu Rosa](https://github.com/tadeurosa-ai) · CC BY-NC-ND 4.0
 
 ---
 
@@ -44,13 +44,13 @@ Com isso, o Claude:
 ## Instalação (Lite — grátis)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tadeurosa/claude-code-setup/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/tadeurosa-ai/claude-code-setup/main/install.sh | bash
 ```
 
 Ou clone e rode localmente:
 
 ```bash
-git clone https://github.com/tadeurosa/claude-code-setup
+git clone https://github.com/tadeurosa-ai/claude-code-setup
 cd claude-code-setup
 bash install.sh
 ```
