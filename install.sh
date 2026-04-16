@@ -162,8 +162,13 @@ if [[ -d "$SCRIPT_DIR/skills" ]]; then
     skill_name="$(basename "$skill_dir")"
     dest="$HOME/.claude/skills/$skill_name"
     mkdir -p "$dest"
-    cp -r "${skill_dir}." "$dest/"
-    ok "Skill: $skill_name"
+    if [[ -f "$dest/skill.md" ]]; then
+      cp -r "${skill_dir}." "$dest/.example/"
+      warn "Skill '$skill_name' já existe — arquivos de referência em $dest/.example/"
+    else
+      cp -r "${skill_dir}." "$dest/"
+      ok "Skill: $skill_name"
+    fi
     SKILLS_INSTALLED=$(( SKILLS_INSTALLED + 1 ))
   done
 fi
