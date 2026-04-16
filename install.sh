@@ -75,7 +75,7 @@ BACKUP_DIR="$HOME/.claude-backup-$(date +%Y%m%d-%H%M%S)"
 
 if [[ -d "$HOME/.claude" ]]; then
   info "Setup anterior encontrado. Fazendo backup..."
-  cp -r "$HOME/.claude" "$BACKUP_DIR"
+  cp -rL "$HOME/.claude" "$BACKUP_DIR" 2>/dev/null || rsync -a --ignore-errors "$HOME/.claude/" "$BACKUP_DIR/" 2>/dev/null || true
   ok "Backup salvo em: $BACKUP_DIR"
 else
   info "Nenhum setup anterior — instalação limpa."
@@ -84,7 +84,7 @@ fi
 # ── Criando estrutura de diretórios ───────────────────────────────────────────
 section "Criando estrutura"
 
-TOTAL_STEPS=6
+TOTAL_STEPS=7
 STEP=0
 
 DIRS=(
@@ -110,8 +110,13 @@ section "Configurando Claude"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [[ -f "$SCRIPT_DIR/config/CLAUDE.md" ]]; then
-  cp "$SCRIPT_DIR/config/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
-  ok "CLAUDE.md instalado"
+  if [[ -f "$HOME/.claude/CLAUDE.md" ]]; then
+    warn "CLAUDE.md já existe — salvo como CLAUDE.md.example (não sobrescrito)"
+    cp "$SCRIPT_DIR/config/CLAUDE.md" "$HOME/.claude/CLAUDE.md.example"
+  else
+    cp "$SCRIPT_DIR/config/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
+    ok "CLAUDE.md instalado"
+  fi
 else
   warn "config/CLAUDE.md não encontrado — pulando"
 fi
