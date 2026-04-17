@@ -59,6 +59,47 @@ bash install.sh
 
 ---
 
+## Backup, formatação e restore
+
+Vai formatar a máquina? Quer migrar para um computador novo? Três comandos resolvem.
+
+### 1. Antes de formatar — faça o backup
+
+```bash
+bash backup.sh
+```
+
+O script salva sua configuração completa do Claude Code (skills, memória, hooks, projetos) em um arquivo `.tar.gz`. Você escolhe onde salvar: USB, iCloud Drive ou Google Drive.
+
+> **Atenção:** este backup cobre **apenas** os arquivos do Claude Code.
+> Para documentos, fotos e vídeos use **Time Machine** (Mac) ou **Backup e Restauração** (Windows) antes de formatar.
+
+### 2. Formate normalmente
+
+Formate a máquina, instale o sistema operacional e instale o Claude Code:
+
+```
+https://claude.ai/code
+```
+
+### 3. Restaure tudo
+
+```bash
+bash restore.sh
+```
+
+O script localiza o backup automaticamente (iCloud, Google Drive, Downloads ou Desktop), verifica a integridade e restaura tudo no lugar certo. Se houver algum arquivo existente, pergunta antes de substituir.
+
+Também funciona passando o caminho direto:
+
+```bash
+bash restore.sh /Volumes/USB/claude-code-snapshot-20260416-120000.tar.gz
+```
+
+**Compatível com:** macOS · Linux · Windows (Git Bash)
+
+---
+
 ## O que está incluído no Lite
 
 | Componente | Lite (grátis) | Pro (pago) |
