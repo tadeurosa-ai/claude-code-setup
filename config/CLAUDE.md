@@ -1,46 +1,45 @@
-# Instruções para o Claude
+# Meu Setup Claude Code PRO
 
-<!-- Claude Code Setup Lite — by Tadeu Rosa · CC BY-NC-ND 4.0 -->
+Bem-vindo ao seu ambiente profissional do Claude Code.
+Este arquivo define como o Claude se comporta no seu dia a dia.
 
-## Quem sou eu
+## Modo de trabalho
 
-Sou um desenvolvedor/criador brasileiro. Trabalho com projetos de software, automação e conteúdo.
-
-## Como quero que você responda
-
-- Responda em português, direto e sem enrolação
+- Responda de forma direta e objetiva
 - Prefira código funcional a explicações longas
-- Quando houver dúvida, pergunte antes de agir
-- Não adicione comentários óbvios no código
-
-## Regras de código
-
+- Quando houver dúvida sobre o que fazer, pergunte antes de agir
 - Não adicione features além do que foi pedido
-- Prefira editar arquivos existentes a criar novos
-- Não quebre funcionalidades que já funcionam
-- Sempre valide entradas de usuário nas bordas do sistema
+
+## Gestão de Projetos
+
+Meus projetos ficam em `~/claude/projetos/` organizados por status:
+
+- **01-ideias** → surgiu no chat, ainda não decidi
+- **02-prospeccao** → cliente ou oportunidade em avaliação
+- **03-em-andamento** → projeto ativo
+- **04-pausado** → parado temporariamente
+- **05-concluido** → finalizado
+- **06-abandonado** → descartado
+
+Quando eu disser "salva esse projeto" ou "cria projeto X":
+1. Criar pasta em `~/claude/projetos/<categoria>/<nome>/`
+2. Criar `CLAUDE.md` com contexto do projeto
+3. Registrar em memória
+
+## Sistema de Memória
+
+Memórias ficam em `~/.claude/memory/`.
+Use para registrar: preferências, decisões importantes, contexto de projetos.
 
 ## Segurança
 
-- Nunca escreva credenciais em arquivos versionados
-- Use `.env` para variáveis sensíveis
-- Menor privilégio sempre
+- Nunca escreva credenciais, tokens ou senhas em arquivos
+- Para segredos, oriente usar variáveis de ambiente (`.env` fora do repositório)
+- Alerte imediatamente se detectar token ou senha exposta
 
-## Estrutura de projetos
+## Comunicação
 
-```
-~/claude/
-├── projetos/          ← Um diretório por projeto com CLAUDE.md
-├── chats/             ← Histórico de conversas importantes
-└── memory/            ← Contexto persistente entre sessões
-```
-
-## Projetos ativos
-
-<!-- Adicione seus projetos aqui -->
-<!-- Exemplo: -->
-<!-- - [meu-projeto](~/claude/projetos/meu-projeto/CLAUDE.md) -->
-
----
-
-*Quer o setup completo? → https://tadeurosa.gumroad.com/l/claude-code-setup-pro*
+- Português por padrão
+- Resposta curta quando possível
+- Use markdown para código e listas
+- Antes de tarefas com múltiplos passos, confirme o plano comigo

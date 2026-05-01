@@ -1,53 +1,20 @@
-# Claude Code Setup Lite
+# Claude Code Setup
 
-**Setup profissional do Claude Code em um comando — para devs e criadores brasileiros.**
+**Professional Claude Code workspace in one command. Free and open source.**
 
-> Por [Tadeu Rosa](https://github.com/tadeurosa-ai) · CC BY-NC-ND 4.0
+Configura um workspace profissional do Claude Code em um comando. Gratuito e open source.
 
----
-
-## O problema
-
-Você instalou o Claude Code. Ele funciona. Mas está longe do potencial real.
-
-Sem uma estrutura certa, você:
-- Repete contexto toda vez que abre uma conversa nova
-- Perde tempo com configurações que poderiam ser automáticas
-- Não usa skills, hooks nem memória persistente
-- Trabalha com o Claude como se fosse só um chat
+![demo](demo.gif)
 
 ---
 
-## O que este setup faz
-
-```
-~/.claude/
-├── CLAUDE.md          ← Instruções permanentes pro Claude
-├── settings.json      ← Configurações otimizadas
-├── skills/            ← Comandos personalizados (/daily, /review...)
-└── hooks/             ← Automações que rodam em eventos
-
-~/claude/
-├── projetos/          ← Contexto por projeto
-├── chats/             ← Histórico organizado
-└── memory/            ← Memória persistente entre sessões
-```
-
-Com isso, o Claude:
-- Lembra quem você é e como você trabalha
-- Responde no seu estilo sem você pedir
-- Executa tarefas recorrentes com um comando
-- Mantém contexto entre sessões
-
----
-
-## Instalação (Lite — grátis)
+## Install / Instalar
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/tadeurosa-ai/claude-code-setup/main/install.sh | bash
 ```
 
-Ou clone e rode localmente:
+Or clone and run locally / Ou clone e rode localmente:
 
 ```bash
 git clone https://github.com/tadeurosa-ai/claude-code-setup
@@ -55,97 +22,69 @@ cd claude-code-setup
 bash install.sh
 ```
 
-**Requisitos:** macOS ou Linux · Claude Code instalado · Git
+**Requirements / Requisitos:** macOS or Linux · Git · Claude Code
 
 ---
 
-## Backup, formatação e restore
+## What's included / O que está incluído
 
-Vai formatar a máquina? Quer migrar para um computador novo? Três comandos resolvem.
+| Component | Description |
+|-----------|-------------|
+| Folder structure | `~/.claude/` + `~/claude/` — organized workspace |
+| `CLAUDE.md` | Persistent instructions Claude follows every session |
+| 11 skills | `/daily` `/review` `/standup` `/backlog` `/debug` `/pr` `/deploy-check` `/estimate` `/context` `/client-report` `/weekly` |
+| Hooks | Automated actions on Claude events (notify when task done) |
+| Memory system | `~/.claude/memory/` — persistent context across sessions |
+| Backup & restore | `backup.sh` + `restore.sh` for migration or reinstall |
 
-### 1. Antes de formatar — faça o backup
+> **Language note:** Skills and CLAUDE.md are in Brazilian Portuguese by default. Claude will respond in Portuguese unless you edit `~/.claude/CLAUDE.md`. Simply change the language instruction in that file to switch.
+
+---
+
+## Skills
+
+| Skill | What it does |
+|-------|-------------|
+| `/daily` | Day summary — open tasks, project context, next steps |
+| `/review` | Code review focused on security, quality and best practices |
+| `/standup` | Generates standup message from recent work |
+| `/backlog` | Saves ideas and tasks without breaking your flow |
+| `/debug` | Systematic debugging — diagnosis before fix |
+| `/pr` | Pull request description from current diff |
+| `/deploy-check` | Pre-deploy checklist for the current branch |
+| `/estimate` | Time and complexity estimate for a task |
+| `/context` | Summarizes current project context for handoff |
+| `/client-report` | Progress report formatted for client communication |
+| `/weekly` | Weekly summary — what shipped, what's next |
+
+---
+
+## Backup, migrate, restore
+
+Moving to a new machine? Formatting?
 
 ```bash
+# Before formatting — backup
 bash backup.sh
-```
 
-O script salva sua configuração completa do Claude Code (skills, memória, hooks, projetos) em um arquivo `.tar.gz`. Você escolhe onde salvar: USB, iCloud Drive ou Google Drive.
-
-> **Atenção:** este backup cobre **apenas** os arquivos do Claude Code.
-> Para documentos, fotos e vídeos use **Time Machine** (Mac) ou **Backup e Restauração** (Windows) antes de formatar.
-
-### 2. Formate normalmente
-
-Formate a máquina, instale o sistema operacional e instale o Claude Code:
-
-```
-https://claude.ai/code
-```
-
-### 3. Restaure tudo
-
-```bash
+# After installing Claude Code on new machine — restore
 bash restore.sh
 ```
 
-O script localiza o backup automaticamente (iCloud, Google Drive, Downloads ou Desktop), verifica a integridade e restaura tudo no lugar certo. Se houver algum arquivo existente, pergunta antes de substituir.
-
-Também funciona passando o caminho direto:
-
-```bash
-bash restore.sh /Volumes/USB/claude-code-snapshot-20260416-120000.tar.gz
-```
-
-**Compatível com:** macOS · Linux · Windows (Git Bash)
+The restore script auto-detects backups in iCloud, Google Drive, Downloads and Desktop.
 
 ---
 
-## O que está incluído no Lite
+## Requirements
 
-| Componente | Lite (grátis) | Pro (pago) |
-|---|---|---|
-| Estrutura de pastas | ✓ | ✓ |
-| CLAUDE.md base | ✓ | ✓ completo |
-| Skills essenciais (3) | ✓ | ✓ 20+ skills |
-| Hooks de automação | — | ✓ |
-| Memória persistente | — | ✓ |
-| RTK (economy de tokens) | — | ✓ |
-| Guia completo em PT | — | ✓ |
-| Suporte direto | — | ✓ Pro |
+- macOS 12+ or Linux
+- Claude Code ([claude.ai/code](https://claude.ai/code)) with Pro or Max plan
+- Git
 
 ---
 
-## Skills incluídas no Lite
+## License
 
-### `/daily`
-Resumo do dia: tarefas abertas, contexto de projetos, próximos passos.
-
-### `/review`
-Revisão de código com foco em segurança, qualidade e boas práticas.
-
-### `/backlog`
-Salva ideias e tarefas no backlog sem sair do fluxo.
-
----
-
-## Quer o setup completo?
-
-O **Claude Code Setup Pro** inclui tudo que uso no meu trabalho real:
-
-- 20+ skills prontas (daily, review, deploy, pesquisa, conteúdo...)
-- Hooks que executam ações automáticas em eventos do Claude
-- Sistema de memória que persiste contexto entre sessões
-- RTK — proxy que reduz uso de tokens em 60-90%
-- Guia completo em português passo a passo
-- Suporte direto para dúvidas de configuração
-
-**→ [Adquirir Setup Pro](https://tadeurosa.gumroad.com/l/claude-code-setup-pro)**
-
----
-
-## Licença
-
-CC BY-NC-ND 4.0 — uso pessoal permitido.
-Redistribuição, venda ou modificação sem autorização proibidos.
+CC BY-NC-ND 4.0 — personal use permitted. Redistribution or modification without authorization prohibited.
 
 © Tadeu Rosa, 2026
