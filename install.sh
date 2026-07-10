@@ -28,7 +28,7 @@ write_atomic() {
 }
 
 is_valid_json() {
-  command -v python3 &>/dev/null || return 0
+  command -v python3 &>/dev/null || return 0  # sem python3: assume válido, preserva arquivo
   python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$1" 2>/dev/null
 }
 
@@ -132,9 +132,20 @@ fi
 ok "Claude Code: $(claude --version 2>/dev/null | head -1 || echo 'ok')"
 
 CHECKPOINT_FILE="$HOME/.claude-install-checkpoint"
+
+# ── Detecta instalação anterior interrompida ──────────────────────────────────
+if [[ -f "$CHECKPOINT_FILE" ]] && [[ "$(cat "$CHECKPOINT_FILE")" != "started" ]]; then
+  LAST_STAGE="$(cat "$CHECKPOINT_FILE" 2>/dev/null || echo 'desconhecido')"
+  warn "Instalação anterior interrompida detectada (última etapa: ${BOLD}$LAST_STAGE${RESET}${YELLOW})"
+  warn "Execute ${BOLD}bash repair.sh${RESET}${YELLOW} para diagnóstico completo."
+  echo ""
+  info "Continuando instalação do ponto de falha..."
+fi
+
+# Escreve checkpoint — qualquer interrupção a partir daqui é detectável
 echo "started" > "$CHECKPOINT_FILE"
 
-# ── Backup ────────────────────────────────────────────────────────────────────
+# ── Limpa backups corrompidos de runs anteriores ──────────────────────────────
 section "Backup"
 
 for old_backup in "$HOME"/.claude-backup-*.tar.gz; do

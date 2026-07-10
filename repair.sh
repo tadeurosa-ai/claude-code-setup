@@ -19,6 +19,7 @@ section() { echo -e "\n${BOLD}${CYAN}▌ $*${RESET}"; }
 hr()      { echo -e "${BLUE}────────────────────────────────────────────────${RESET}"; }
 
 is_valid_json() {
+  command -v python3 &>/dev/null || return 0  # sem python3: assume válido, preserva arquivo
   python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$1" 2>/dev/null
 }
 
@@ -225,7 +226,7 @@ case "$choice" in
     # Renomeia atual para .broken (preserva evidência)
     if [[ -d "$HOME/.claude" ]]; then
       mv "$HOME/.claude" "$HOME/.claude.broken-$(date +%Y%m%d-%H%M%S)"
-      warn "~/.claude atual movido para .claude.broken-* (pode deletar depois)"
+      warn "$HOME/.claude atual movido para .claude.broken-* (pode deletar depois)"
     fi
     mv "$TMP_RESTORE/.claude" "$HOME/.claude"
     rm -f "$CHECKPOINT_FILE"
@@ -234,9 +235,14 @@ case "$choice" in
     ;;
   I)
     echo ""
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ ! -f "$SCRIPT_DIR/install.sh" ]]; then
+      bad "install.sh não encontrado em $SCRIPT_DIR"
+      info "Baixe o pacote completo e rode repair.sh a partir da pasta do pacote."
+      exit 1
+    fi
     info "Iniciando reinstalação..."
     rm -f "$CHECKPOINT_FILE"
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     exec bash "$SCRIPT_DIR/install.sh"
     ;;
   L)

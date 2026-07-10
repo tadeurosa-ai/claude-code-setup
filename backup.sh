@@ -14,7 +14,6 @@ set -euo pipefail
 # ── Cores ─────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; BOLD='\033[1m'; RESET='\033[0m'
-CYAN='\033[0;36m'
 
 info()    { echo -e "${BLUE}▸${RESET} $*"; }
 ok()      { echo -e "${GREEN}✓${RESET} $*"; }
@@ -24,10 +23,10 @@ section() { echo -e "\n${BOLD}── $* ─────────────�
 
 # ── Detecta OS ────────────────────────────────────────────────────────────────
 OS="$(uname -s)"
-IS_MAC=false; IS_WIN=false; IS_LINUX=false
+IS_MAC=false; IS_WIN=false
 case "$OS" in
   Darwin) IS_MAC=true ;;
-  Linux)  IS_LINUX=true ;;
+  Linux)  ;;
   MINGW*|MSYS*|CYGWIN*) IS_WIN=true ;;
   *) error "Sistema não suportado: $OS" ;;
 esac
@@ -117,9 +116,13 @@ done
 while IFS= read -r -d '' f; do
   rm -f "$f"
   (( CLEANED++ )) || true
-done < <(find "$HOME/.claude" -name "*.tmp" -o -name "*.XXXXXX" 2>/dev/null -print0 || true)
+done < <(find "$HOME/.claude" \( -name "*.tmp" -o -name "*.XXXXXX" \) -print0 2>/dev/null || true)
 
-[[ $CLEANED -gt 0 ]] && ok "$CLEANED arquivo(s) temporário(s) removido(s)" || ok "Nada para limpar"
+if [[ $CLEANED -gt 0 ]]; then
+  ok "$CLEANED arquivo(s) temporário(s) removido(s)"
+else
+  ok "Nada para limpar"
+fi
 
 # ── Limpeza opcional de histórico ─────────────────────────────────────────────
 EXCLUDE_CHATS=false
@@ -148,8 +151,10 @@ SIZE_CLAUDE=0; SIZE_WORKSPACE=0
   SIZE_CLAUDE="$(du -sm "$HOME/.claude" 2>/dev/null | cut -f1 || echo 0)"
 
 if [[ -d "$HOME/claude" ]]; then
-  if $EXCLUDE_CHATS; then
-    SIZE_WORKSPACE="$(du -sm --exclude="$HOME/claude/chats" "$HOME/claude" 2>/dev/null | cut -f1 || echo 0)"
+  if $EXCLUDE_CHATS && [[ -d "$HOME/claude/chats" ]]; then
+    _TOTAL="$(du -sm "$HOME/claude" 2>/dev/null | cut -f1 || echo 0)"
+    _CHATS="$(du -sm "$HOME/claude/chats" 2>/dev/null | cut -f1 || echo 0)"
+    SIZE_WORKSPACE=$(( _TOTAL - _CHATS ))
   else
     SIZE_WORKSPACE="$(du -sm "$HOME/claude" 2>/dev/null | cut -f1 || echo 0)"
   fi

@@ -248,7 +248,7 @@ restore_dir() {
     mkdir -p "$dest"
     local count=0
     while IFS= read -r -d '' file; do
-      rel="${file#$src/}"
+      rel="${file#"$src"/}"
       target="$dest/$rel"
       if [[ ! -e "$target" ]]; then
         mkdir -p "$(dirname "$target")"

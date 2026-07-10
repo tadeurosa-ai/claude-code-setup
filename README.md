@@ -83,6 +83,21 @@ The restore script auto-detects backups in iCloud, Google Drive, Downloads and D
 
 ---
 
+## Lite vs Pro
+
+| Componente | Lite (grátis) | Pro (pago) |
+|---|---|---|
+| Estrutura de pastas | ✓ | ✓ |
+| CLAUDE.md base | ✓ | ✓ completo |
+| Skills essenciais (3) | ✓ | ✓ 20+ skills |
+| Hooks de automação | — | ✓ |
+| Memória persistente | — | ✓ |
+| RTK (economia de tokens) | — | ✓ |
+| Guia completo em PT | — | ✓ |
+| Suporte direto | — | ✓ Pro |
+
+---
+
 ## License
 
 CC BY-NC-ND 4.0 — personal use permitted. Redistribution or modification without authorization prohibited.
