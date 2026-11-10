@@ -72,7 +72,7 @@ cat << 'SCOPE'
 ║  Para backup completo da máquina use:                        ║
 ║    • Mac:     Time Machine                                   ║
 ║    • Windows: Backup e Restauração (Painel de Controle)     ║
-║    • Nuvem:   iCloud / Google Drive / OneDrive              ║
+║    • Nuvem:   iCloud / Google Drive / OneDrive / Dropbox    ║
 ╚══════════════════════════════════════════════════════════════╝
 SCOPE
 echo -e "${RESET}"
