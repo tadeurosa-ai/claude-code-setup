@@ -5,3 +5,5 @@
 *.tar.gz
 *.pem
 *.key
+.env.*
+!.env.example
