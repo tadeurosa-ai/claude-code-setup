@@ -271,11 +271,28 @@ nome_sobrando() {
 }
 
 # Skill instalada por este pacote: marca no frontmatter, ou o rodapé das versões antigas
-# (PRO; e a Lite, 1º release, só pelo texto exato da linha do rodapé)
+# — e o rodapé só conta quando é a ÚLTIMA linha do arquivo (PRO; a Lite, 1º release, só
+# pelo texto exato). Rodapé citado no meio do texto não marca nada.
 do_pacote() {
-  grep -q '^  origem: claude-code-setup$' "$1" 2>/dev/null \
-    || grep -q 'Claude Code Setup PRO — by Tadeu Rosa' "$1" 2>/dev/null \
-    || LC_ALL=C grep -qxF '*Claude Code Setup Lite — by Tadeu Rosa · CC BY-NC-ND 4.0*' "$1" 2>/dev/null
+  local ult
+  grep -q '^  origem: claude-code-setup$' "$1" 2>/dev/null && return 0
+  ult="$(tail -n 1 "$1" 2>/dev/null)" || return 1
+  case "$ult" in *'Claude Code Setup PRO — by Tadeu Rosa'*) return 0 ;; esac
+  [[ "$ult" == '*Claude Code Setup Lite — by Tadeu Rosa · CC BY-NC-ND 4.0*' ]]
+}
+
+# Pasta com skill.md e SKILL.md juntos (só em disco que diferencia maiúscula).
+# Nunca mexe em arquivo do usuário:
+#  • skill.md do pacote + SKILL.md com conteúdo → guardar o skill.md;
+#  • skill.md do pacote com conteúdo + SKILL.md vazio, numa das 11 pastas do pacote →
+#    renomear (o vazio é guardado e o skill.md vira SKILL.md: o que estava nele continua em uso);
+#  • qualquer outro caso → manter (nada muda).
+acao_dois_nomes() {  # acao_dois_nomes <pasta> <pasta do pacote: sim|nao> <outro nome>
+  if do_pacote "$1/$3"; then
+    if [[ -s "$1/SKILL.md" ]]; then echo guardar; return 0; fi
+    if [[ "$2" == sim && -s "$1/$3" ]]; then echo renomear; return 0; fi
+  fi
+  echo manter
 }
 
 # Guarda (nunca apaga) o que sai de ~/.claude/skills numa pasta única desta instalação
@@ -297,9 +314,24 @@ guardar_antiga() {  # guardar_antiga <caminho> <nome dentro da pasta de antigas>
 
 # Deixa a pasta com um só arquivo de skill, chamado SKILL.md, sem mexer no que é do usuário:
 #  • renomeação interrompida (.SKILL.md.renomeando): termina; se já há SKILL.md, guarda;
-#  • skill.md e SKILL.md juntos: o skill.md do pacote é guardado; o do usuário fica, com aviso;
+#  • skill.md e SKILL.md juntos: ver acao_dois_nomes;
 #  • só skill.md: do pacote (ou vazio) vira SKILL.md em dois passos (o Mac não diferencia
 #    maiúscula); do usuário não é mexido.
+dois_nomes() {  # dois_nomes <pasta> <pasta do pacote: sim|nao> <outro nome>
+  local d="$1" rel="${1#$HOME/}" sub="${1#$HOME/.claude/skills/}"
+  case "$(acao_dois_nomes "$d" "$2" "$3")" in
+    guardar)
+      guardar_antiga "$d/$3" "$sub/$3" \
+        && warn "Old ~/$rel/$3 (from this package) moved to ~/$GUARDADO — the folder keeps SKILL.md." ;;
+    renomear)
+      guardar_antiga "$d/SKILL.md" "$sub/SKILL.md.vazio" \
+        && mv "$d/$3" "$d/.SKILL.md.renomeando" && mv "$d/.SKILL.md.renomeando" "$d/SKILL.md" \
+        && warn "Empty ~/$rel/SKILL.md moved to ~/$GUARDADO; ~/$rel/$3 is now SKILL.md." ;;
+    *)
+      warn "~/$rel/$3 and ~/$rel/SKILL.md both exist — kept as is. Claude Code reads SKILL.md." ;;
+  esac
+}
+
 para_SKILL() {
   local d="$1" rel="${1#$HOME/}" f outro
   if [[ -f "$d/.SKILL.md.renomeando" ]]; then
@@ -311,12 +343,7 @@ para_SKILL() {
     fi
   fi
   if outro="$(nome_sobrando "$d")"; then
-    if do_pacote "$d/$outro"; then
-      guardar_antiga "$d/$outro" "${d#$HOME/.claude/skills/}/$outro" \
-        && warn "Old ~/$rel/$outro (from this package) moved to ~/$GUARDADO — the folder keeps SKILL.md."
-    else
-      warn "~/$rel/$outro and SKILL.md are both yours — kept. Claude Code reads SKILL.md."
-    fi
+    dois_nomes "$d" "${2:-sim}" "$outro"
     return 0
   fi
   f="$(arquivo_skill "$d")" || return 0
@@ -340,6 +367,16 @@ for velho in review debug context; do
     warn "Skill '$velho' is yours (not from this package) — kept. Note: it replaces the built-in /$velho command."
   fi
 done
+# Fora das 11 pastas do pacote: só sai um skill.md reconhecido como do pacote quando já há
+# um SKILL.md com conteúdo na mesma pasta. Nada mais é movido, renomeado ou trocado.
+for d in "$HOME/.claude/skills"/*/; do
+  d="${d%/}"
+  [[ -d "$d" && ! -L "$d" ]] || continue
+  [[ -d "$SCRIPT_DIR/skills/$(basename "$d")" ]] && continue
+  outro="$(nome_sobrando "$d")" || continue
+  dois_nomes "$d" nao "$outro"
+done
+
 if [[ -n "$SKILLS_ANTIGAS" ]]; then
   info "New names: /revisar-codigo (was /review), /depurar (was /debug), /contexto-projeto (was /context)."
 fi
@@ -353,7 +390,7 @@ if [[ -d "$SCRIPT_DIR/skills" ]]; then
 
     para_SKILL "$dest"
     existing="$(arquivo_skill "$dest")" || existing=""
-    if [[ -n "$existing" ]] && [[ -s "$existing" ]]; then
+    if [[ -n "$existing" ]] && { [[ -s "$existing" ]] || nome_sobrando "$dest" >/dev/null; }; then
       mkdir -p "$dest/.example"
       para_SKILL "$dest/.example"
       cp -r "${skill_dir}." "$dest/.example/"

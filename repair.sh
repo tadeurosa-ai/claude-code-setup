@@ -176,12 +176,31 @@ nome_sobrando() {
 }
 
 # Skill instalada por este pacote: marca no frontmatter, ou o rodapé das versões antigas
-# (PRO; e a Lite, 1º release, só pelo texto exato da linha do rodapé)
+# — e o rodapé só conta quando é a ÚLTIMA linha do arquivo (PRO; a Lite, 1º release, só
+# pelo texto exato). Rodapé citado no meio do texto não marca nada.
 do_pacote() {
-  grep -q '^  origem: claude-code-setup$' "$1" 2>/dev/null \
-    || grep -q 'Claude Code Setup PRO — by Tadeu Rosa' "$1" 2>/dev/null \
-    || LC_ALL=C grep -qxF '*Claude Code Setup Lite — by Tadeu Rosa · CC BY-NC-ND 4.0*' "$1" 2>/dev/null
+  local ult
+  grep -q '^  origem: claude-code-setup$' "$1" 2>/dev/null && return 0
+  ult="$(tail -n 1 "$1" 2>/dev/null)" || return 1
+  case "$ult" in *'Claude Code Setup PRO — by Tadeu Rosa'*) return 0 ;; esac
+  [[ "$ult" == '*Claude Code Setup Lite — by Tadeu Rosa · CC BY-NC-ND 4.0*' ]]
 }
+
+# Pasta com skill.md e SKILL.md juntos (só em disco que diferencia maiúscula).
+# Nunca mexe em arquivo do usuário:
+#  • skill.md do pacote + SKILL.md com conteúdo → guardar o skill.md;
+#  • skill.md do pacote com conteúdo + SKILL.md vazio, numa das 11 pastas do pacote →
+#    renomear (o vazio é guardado e o skill.md vira SKILL.md: o que estava nele continua em uso);
+#  • qualquer outro caso → manter (nada muda).
+acao_dois_nomes() {  # acao_dois_nomes <pasta> <pasta do pacote: sim|nao> <outro nome>
+  if do_pacote "$1/$3"; then
+    if [[ -s "$1/SKILL.md" ]]; then echo guardar; return 0; fi
+    if [[ "$2" == sim && -s "$1/$3" ]]; then echo renomear; return 0; fi
+  fi
+  echo manter
+}
+
+REPAIR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [[ ${#skill_dirs[@]} -eq 0 ]]; then
   warn "Nenhuma skill instalada"
@@ -193,11 +212,13 @@ else
       warn "Skill '$skill_name' — renomeação interrompida (.SKILL.md.renomeando): rode o install.sh de novo"
     fi
     if outro="$(nome_sobrando "${skill_dir%/}")"; then
-      if do_pacote "${skill_dir%/}/$outro"; then
-        warn "Skill '$skill_name' — sobrou o $outro antigo do pacote (~/.claude/skills/$skill_name/$outro): rode o install.sh de novo para guardá-lo"
-      else
-        warn "Skill '$skill_name' — ~/.claude/skills/$skill_name/$outro e SKILL.md são os dois seus; o Claude Code usa o SKILL.md"
-      fi
+      if [[ -d "$REPAIR_DIR/skills/$skill_name" ]]; then dentro=sim; else dentro=nao; fi
+      # mesma decisão do install.sh: só manda rodar o instalador quando ele resolve
+      case "$(acao_dois_nomes "${skill_dir%/}" "$dentro" "$outro")" in
+        guardar)  warn "Skill '$skill_name' — sobrou o $outro antigo do pacote (~/.claude/skills/$skill_name/$outro): rode o install.sh de novo para guardá-lo" ;;
+        renomear) warn "Skill '$skill_name' — SKILL.md vazio e o $outro do pacote tem conteúdo: rode o install.sh de novo" ;;
+        *)        info "Skill '$skill_name' — tem ~/.claude/skills/$skill_name/$outro e SKILL.md; o Claude Code usa o SKILL.md (o instalador não mexe nisso)" ;;
+      esac
     fi
     skill_md="$(arquivo_skill "${skill_dir%/}")" || skill_md=""
     if [[ -n "$skill_md" ]] && [[ -s "$skill_md" ]]; then
