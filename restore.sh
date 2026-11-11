@@ -31,7 +31,9 @@ case "$OS" in
   *) error "Sistema não suportado: $OS" ;;
 esac
 
-modo_atual() { if $IS_MAC; then stat -f %Lp "$1"; else stat -c %a "$1"; fi; }
+# Permissão atual — sempre a do DESTINO quando o caminho é atalho (stat -L): a do próprio
+# atalho é 777 no Linux e 755 no Mac, e usá-la deixaria o "só fecha" abrir a pasta
+modo_atual() { if $IS_MAC; then stat -L -f %Lp "$1"; else stat -L -c %a "$1"; fi; }
 
 # ── Banner ────────────────────────────────────────────────────────────────────
 clear 2>/dev/null || true   # TERM=dumb e afins: limpar a tela não é essencial
