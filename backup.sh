@@ -416,7 +416,10 @@ def trechos_token(s):
 # ── Chaves (D8) ──
 CHAVE_EXT = (".pem", ".key", ".p12", ".pfx", ".jks", ".keystore")
 CHAVE_PREF = ("id_rsa", "id_ed25519", "id_ecdsa", "id_dsa")
-RE_PRIVADA = re.compile(rb"(?m)^-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
+# D8 (revista em 11/11): cabeçalho no começo da linha, logo depois de aspas ou de um
+# "\n" escrito no texto (chave guardada dentro de JSON, ex.: conta de serviço).
+# Um texto que cite o cabeçalho entre aspas também sai (erro para o lado seguro).
+RE_PRIVADA = re.compile(rb'(?m)(?:^|"|\\n)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----')
 COPIAS_CONFIG = ("settings*.json.*", ".settings*.json*", ".mcp.json", "*.mcp.json*", "claude-json.backup*")
 
 class NaoLeu(Exception):
