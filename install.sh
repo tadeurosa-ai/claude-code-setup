@@ -343,10 +343,11 @@ if [[ -n "$NOTIF_CMD" ]]; then
     printf '  "hooks": { "Notification": [ { "matcher": "permission_prompt|idle_prompt", "hooks": [ { "type": "command", "command": %s } ] } ] }\n' \
       "\"$(printf '%s' "$NOTIF_CMD" | sed 's/\\/\\\\/g; s/"/\\"/g')\""
   else
-    _notif_out="$(python3 - "$SETTINGS_FILE" "$NOTIF_CMD" "$(date +%Y%m%d-%H%M%S)" <<'PY'
+    _notif_stamp="$(date +%Y%m%d-%H%M%S)"
+    _notif_out="$(python3 - "$SETTINGS_FILE" "$NOTIF_CMD" "$_notif_stamp" <<'PY'
 import json, os, shutil, sys, tempfile
-path, cmd, stamp = sys.argv[1:4]
-path = os.path.realpath(path)  # settings.json que é atalho continua atalho
+caminho, cmd, stamp = sys.argv[1:4]
+path = os.path.realpath(caminho)  # settings.json que é atalho continua atalho
 with open(path, encoding="utf-8") as f:
     data = json.load(f)
 if not isinstance(data, dict):
@@ -361,7 +362,9 @@ if any(h.get("command") == cmd for h in existentes):
     print("igual"); sys.exit(0)
 if existentes:
     print("outra"); sys.exit(0)
-shutil.copy2(path, f"{path}.antes-setup-{stamp}")
+# A cópia fica sempre em ~/.claude (onde o backup sem senhas a reconhece), mesmo
+# quando o settings.json é atalho para outro lugar
+shutil.copy2(path, f"{caminho}.antes-setup-{stamp}")
 data.setdefault("hooks", {}).setdefault("Notification", []).append(
     {"matcher": "permission_prompt|idle_prompt", "hooks": [{"type": "command", "command": cmd}]})
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".settings.", suffix=".tmp")
@@ -376,7 +379,7 @@ print("ok")
 PY
 )" || _notif_out="erro"
     case "$_notif_out" in
-      ok)      NOTIF_STATUS="installed"; ok "Notification hook added to settings.json (copy of the previous file: settings.json.antes-setup-*)" ;;
+      ok)      NOTIF_STATUS="installed"; ok "Notification hook added to settings.json (copy of the previous file: ~/.claude/settings.json.antes-setup-$_notif_stamp)" ;;
       igual)   NOTIF_STATUS="installed"; ok "Notification hook already registered — kept" ;;
       outra)   NOTIF_STATUS="yours";     ok "You already have a notification hook — kept, nothing added" ;;
       formato) warn "settings.json has an unexpected \"hooks\" format — not changed. Notification skipped." ;;
