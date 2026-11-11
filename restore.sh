@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
 # Claude Code Restore — by Tadeu Rosa
-# Versão: 1.1.0
+# Versão: 1.2.0
 # Licença: CC BY-NC-ND 4.0 — uso pessoal permitido, redistribuição proibida
 # ─────────────────────────────────────────────────────────────────────────────
 # COMO USAR:
@@ -177,6 +177,12 @@ echo "    ..."
 # ── Detecta conflito com setup existente ──────────────────────────────────────
 section "Verificando destino"
 
+# Snapshot novo (backup.sh 1.2.0+) traz a lista do que ficou de fora de propósito
+TEM_REGRAS=false
+if { LC_ALL=C tar -tzf "$SNAPSHOT" 2>/dev/null || true; } | grep -qx 'claude-code-backup-excluidos.txt'; then
+  TEM_REGRAS=true
+fi
+
 HAS_EXISTING=false
 [[ -d "$HOME/.claude" ]] && HAS_EXISTING=true
 [[ -d "$HOME/claude"  ]] && HAS_EXISTING=true
@@ -186,7 +192,12 @@ if $HAS_EXISTING; then
   echo ""
   echo -e "  O que deseja fazer com os arquivos atuais?"
   echo -e "  [1] Guardar os atuais numa pasta .anterior e substituir pelo snapshot  ${GREEN}(recomendado)${RESET}"
-  echo -e "      (login, histórico, .env e chaves que não estão no snapshot voltam da pasta .anterior)"
+  if $TEM_REGRAS; then
+    echo -e "      O que o backup deixou de fora de propósito (login, histórico, senhas) volta da .anterior;"
+    echo -e "      o resto fica guardado nela."
+  else
+    echo -e "      (backup antigo: tudo o que está na pasta atual e não está no backup volta da .anterior)"
+  fi
   echo -e "  [2] Mesclar — snapshot preenche apenas o que está faltando"
   echo -e "  [3] Cancelar"
   echo ""
@@ -210,14 +221,17 @@ trap 'rm -rf "$TMP_EXTRACT"' EXIT
 
 # Extrai ANTES de mexer em qualquer pasta: snapshot com defeito para aqui.
 info "Extraindo snapshot..."
-tar -xzf "$SNAPSHOT" -C "$TMP_EXTRACT" 2>/dev/null || \
+LC_ALL=C tar -xzf "$SNAPSHOT" -C "$TMP_EXTRACT" 2>/dev/null || \
   error "Falha ao extrair snapshot. Nada foi alterado nas suas pastas."
 
-# Backup feito para a nuvem? (gravado pelo backup.sh)
-SNAP_DESTINO=""
-if [[ -f "$TMP_EXTRACT/claude-code-backup-info.txt" ]]; then
-  SNAP_DESTINO="$(sed -n 's/^destino=//p' "$TMP_EXTRACT/claude-code-backup-info.txt" | head -1)"
+# Informação gravada pelo backup.sh
+INFO="$TMP_EXTRACT/claude-code-backup-info.txt"
+SNAP_DESTINO=""; SNAP_SEGREDOS=""
+if [[ -f "$INFO" ]]; then
+  SNAP_DESTINO="$(sed -n 's/^destino=//p' "$INFO" | head -1)"
+  SNAP_SEGREDOS="$(sed -n 's/^segredos=//p' "$INFO" | head -1)"
 fi
+REGRAS="$TMP_EXTRACT/claude-code-backup-excluidos.txt"
 SNAP_TEM_SETTINGS=false
 [[ -f "$TMP_EXTRACT/.claude/settings.json" ]] && SNAP_TEM_SETTINGS=true
 SETTINGS_EXISTIA=false
@@ -246,9 +260,30 @@ desfazer() {
       fi
     fi
   done
+  FEITOS_DEST=(); FEITOS_ANT=()
 }
 
-# Copia da pasta .anterior tudo o que NÃO veio no snapshot (login, histórico, .env, chaves, plugins...)
+# Ctrl+C ou kill durante a troca: desfaz e diz onde está cada coisa
+interrompido() {
+  trap - INT TERM
+  echo ""
+  warn "Restore interrompido."
+  desfazer
+  echo -e "${YELLOW}  Nada foi perdido: as pastas originais voltaram para o lugar (ou o caminho delas aparece acima).${RESET}" >&2
+  exit 130
+}
+trap interrompido INT TERM
+
+# Caminho seguro vindo do snapshot: relativo, dentro de .claude/ ou claude/, sem ".."
+caminho_ok() {
+  case "$1" in
+    /*|..|../*|*/..|*/../*) return 1 ;;
+    .claude/*|claude/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Backup antigo (sem regras): copia da .anterior tudo o que NÃO veio no snapshot
 TRAZIDOS=0
 trazer_de_volta() {
   local ant="$1" dest="$2" file rel target
@@ -265,6 +300,46 @@ trazer_de_volta() {
     (( TRAZIDOS++ )) || true
   done < <(find -H "$ant" \( -type f -o -type l \) -print0 2>/dev/null)
   return 0
+}
+
+# Backup novo: traz da .anterior só o que o backup deixou de fora de propósito
+#   pasta   <caminho>  pasta que ficou inteira de fora → volta inteira
+#   resto   <caminho>  pasta que entrou em parte → volta o que o snapshot não trouxe
+#   arquivo <caminho>  arquivo que ficou de fora → volta
+trazer_por_regras() {
+  local raiz="$1" ant="$2" dest="$3" registro tipo cam rel base item r lista
+  TRAZIDOS=0
+  lista="$TMP_EXTRACT/.trazer-$raiz"
+  : > "$lista"
+  while IFS= read -r -d '' registro; do
+    tipo="${registro%%$'\t'*}"; cam="${registro#*$'\t'}"
+    if ! caminho_ok "$cam"; then
+      warn "Regra ignorada (caminho inválido no snapshot): $cam"
+      continue
+    fi
+    case "$cam" in "$raiz"/*) ;; *) continue ;; esac
+    rel="${cam#"$raiz"/}"
+    base="$ant/$rel"
+    [[ -e "$base" || -L "$base" ]] || continue
+    case "$tipo" in
+      arquivo)
+        if [[ ! -e "$dest/$rel" && ! -L "$dest/$rel" ]]; then
+          printf '%s\0' "$rel" >> "$lista"; (( TRAZIDOS++ )) || true
+        fi ;;
+      pasta|resto)
+        while IFS= read -r -d '' item; do
+          r="${item#"$ant"/}"
+          if [[ ! -e "$dest/$r" && ! -L "$dest/$r" ]]; then
+            printf '%s\0' "$r" >> "$lista"; (( TRAZIDOS++ )) || true
+          fi
+        done < <(find -H "$base" -print0 2>/dev/null)
+        ;;
+      *) warn "Regra desconhecida ignorada: $tipo" ;;
+    esac
+  done < "$REGRAS"
+  [[ -s "$lista" ]] || return 0
+  ( cd "$ant" && LC_ALL=C tar --no-recursion -cf - --null -T "$lista" ) | \
+    ( cd "$dest" && LC_ALL=C tar -xpf - )
 }
 
 restore_dir() {
@@ -293,13 +368,21 @@ restore_dir() {
       error "A cópia de ~/$src_name falhou. Suas pastas originais voltaram para o lugar."
     fi
 
-    # 3. Traz de volta o que não veio no snapshot
+    # 3. Traz de volta o que o snapshot não trouxe
     if [[ -n "$ant" ]]; then
-      if ! trazer_de_volta "$ant" "$dest"; then
-        desfazer
-        error "Falha ao trazer arquivos de $(basename "$ant"). Suas pastas originais voltaram para o lugar."
+      if [[ -f "$REGRAS" ]]; then
+        trazer_por_regras "$src_name" "$ant" "$dest" || {
+          desfazer
+          error "Falha ao trazer arquivos de $(basename "$ant"). Suas pastas originais voltaram para o lugar."
+        }
+        ok "Restaurado: ~/$src_name ($TRAZIDOS item(ns) que o backup deixou de fora vieram da pasta anterior)"
+      else
+        trazer_de_volta "$ant" "$dest" || {
+          desfazer
+          error "Falha ao trazer arquivos de $(basename "$ant"). Suas pastas originais voltaram para o lugar."
+        }
+        ok "Restaurado: ~/$src_name ($TRAZIDOS arquivo(s) que não estavam no snapshot vieram da pasta anterior)"
       fi
-      ok "Restaurado: ~/$src_name ($TRAZIDOS arquivo(s) que não estavam no snapshot vieram da pasta anterior)"
       ANTERIORES_MSG="${ANTERIORES_MSG}\n  • ${ant}"
     else
       ok "Restaurado: ~/$src_name"
@@ -329,10 +412,54 @@ restore_dir "claude"
 
 [[ $RESTORED -eq 0 ]] && error "Nenhum diretório do Claude Code encontrado no snapshot"
 
-# ── settings.json de backup na nuvem: valores do bloco "env" ─────────────────
-# O backup para a nuvem grava o settings.json com os valores do "env" vazios.
-# Aqui: repõe o valor da pasta anterior; sem valor para repor, tira a chave
-# vazia e lista o nome para a pessoa preencher.
+# ── Atalhos de ~/.claude (ex.: skills -> ~/claude/skills) ────────────────────
+ANT_ALVO_SETTINGS=""; ANT_ALVO_SETTINGS_LOCAL=""
+if [[ -f "$INFO" ]] && grep -q '^atalho=' "$INFO"; then
+  section "Atalhos"
+  while IFS= read -r linha; do
+    item="${linha%%|*}"; alvo_rel="${linha#*|}"
+    nome_item="${item#.claude/}"
+    if [[ "$item" == "$linha" || "$nome_item" == "$item" || "$nome_item" == */* || -z "$nome_item" ]] \
+       || ! caminho_ok "$alvo_rel" ; then
+      warn "Atalho ignorado (informação inválida no snapshot): $linha"
+      continue
+    fi
+    link="$HOME/$item"; alvo="$HOME/$alvo_rel"
+    if [[ -e "$TMP_EXTRACT/$item" && ! -L "$TMP_EXTRACT/$item" && "$RESTORE_MODE" == "replace" && -e "$link" && ! -L "$link" ]]; then
+      # O conteúdo veio no snapshot: vai para o destino do atalho, e o atalho é recriado
+      ant_alvo=""
+      if [[ -e "$alvo" || -L "$alvo" ]]; then
+        ant_alvo="$alvo.anterior-$RESTORE_TS"
+        mv "$alvo" "$ant_alvo" || { desfazer; error "Não consegui guardar $alvo. Suas pastas originais voltaram para o lugar."; }
+      fi
+      FEITOS_DEST+=("$alvo"); FEITOS_ANT+=("$ant_alvo")
+      mkdir -p "$(dirname "$alvo")" && mv "$link" "$alvo" && ln -s "$alvo" "$link" || {
+        desfazer
+        error "Falha ao recriar o atalho ~/$item. Suas pastas originais voltaram para o lugar."
+      }
+      case "$nome_item" in
+        settings.json)       ANT_ALVO_SETTINGS="$ant_alvo" ;;
+        settings.local.json) ANT_ALVO_SETTINGS_LOCAL="$ant_alvo" ;;
+      esac
+      if [[ -n "$ant_alvo" ]]; then
+        ok "~/$item → ~/$alvo_rel (conteúdo do backup; o que estava lá ficou em ${ant_alvo})"
+      else
+        ok "~/$item → ~/$alvo_rel (conteúdo do backup)"
+      fi
+      [[ -n "$ant_alvo" ]] && ANTERIORES_MSG="${ANTERIORES_MSG}\n  • ${ant_alvo}"
+    elif [[ ! -e "$link" && ! -L "$link" ]]; then
+      ln -s "$alvo" "$link"
+      ok "~/$item → ~/$alvo_rel (atalho recriado)"
+      [[ -e "$alvo" ]] || warn "O destino ~/$alvo_rel não existe nesta máquina: o atalho fica quebrado até ele existir."
+    fi
+  done < <(sed -n 's/^atalho=//p' "$INFO")
+fi
+
+
+# ── settings sem segredos: valores do bloco "env" e tokens com marcador ──────
+# Backup para a nuvem ou local sem senhas: o settings vem com o "env" vazio e
+# tokens trocados por <<removido-pelo-backup>>. Aqui: repõe da pasta anterior;
+# sem valor para repor, tira a chave vazia do env / deixa o marcador e lista.
 SETTINGS_VEIO_DO_SNAPSHOT=false
 if $SNAP_TEM_SETTINGS; then
   if [[ "$RESTORE_MODE" == "replace" ]] || ! $SETTINGS_EXISTIA; then
@@ -340,68 +467,112 @@ if $SNAP_TEM_SETTINGS; then
   fi
 fi
 
-ENV_FALTAM=""
-if [[ "$SNAP_DESTINO" == "nuvem" ]] && $SETTINGS_VEIO_DO_SNAPSHOT && [[ -f "$HOME/.claude/settings.json" ]]; then
-  section "Chaves do settings.json"
-  SETTINGS_ANTERIOR="$HOME/.claude.anterior-$RESTORE_TS/settings.json"
+if [[ "$SNAP_DESTINO" == "nuvem" || "$SNAP_SEGREDOS" == "nao" ]] && $SETTINGS_VEIO_DO_SNAPSHOT; then
+  section "Chaves do settings"
   if ! command -v python3 &>/dev/null; then
-    warn "python3 não encontrado: confira o bloco env do ~/.claude/settings.json (os valores vieram vazios do backup na nuvem)."
-  elif ENV_SAIDA="$(python3 - "$HOME/.claude/settings.json" "$SETTINGS_ANTERIOR" <<'PY'
-import json, os, sys, tempfile
-atual, anterior = sys.argv[1], sys.argv[2]
+    warn "python3 não encontrado: confira o bloco env e os <<removido-pelo-backup>> do ~/.claude/settings.json."
+  else
+    for nome_settings in settings.json settings.local.json; do
+      ATUAL="$HOME/.claude/$nome_settings"
+      [[ -f "$TMP_EXTRACT/.claude/$nome_settings" && -f "$ATUAL" ]] || continue
+      # settings que era atalho: a versão anterior é a que estava no destino do atalho
+      ANTERIOR="$HOME/.claude.anterior-$RESTORE_TS/$nome_settings"
+      [[ "$nome_settings" == settings.json && -n "$ANT_ALVO_SETTINGS" ]] && ANTERIOR="$ANT_ALVO_SETTINGS"
+      [[ "$nome_settings" == settings.local.json && -n "$ANT_ALVO_SETTINGS_LOCAL" ]] && ANTERIOR="$ANT_ALVO_SETTINGS_LOCAL"
+      if SAIDA="$(python3 - "$ATUAL" "$ANTERIOR" <<'PY'
+import json, os, re, sys, tempfile
+MARCADOR = "<<removido-pelo-backup>>"
+atual, anterior = os.path.realpath(sys.argv[1]), sys.argv[2]
 with open(atual, encoding="utf-8") as f:
     d = json.load(f)
-env = d.get("env")
-if not isinstance(env, dict):
-    sys.exit(0)
-vazias = [k for k, v in env.items() if v == ""]
-if not vazias:
-    sys.exit(0)
 antigo = {}
 if os.path.isfile(anterior):
     try:
         with open(anterior, encoding="utf-8") as f:
-            a = json.load(f).get("env")
-        if isinstance(a, dict):
-            antigo = a
+            antigo = json.load(f)
     except Exception:
-        pass
-repostas, faltam = [], []
-for k in vazias:
-    v = antigo.get(k)
-    if v is not None and v != "":
-        env[k] = v
-        repostas.append(k)
-    else:
-        del env[k]
-        faltam.append(k)
-modo = os.stat(atual).st_mode & 0o777
-fd, tmp = tempfile.mkstemp(dir=os.path.dirname(atual), prefix=".settings.", suffix=".tmp")
-with os.fdopen(fd, "w", encoding="utf-8") as f:
-    json.dump(d, f, indent=2, ensure_ascii=False)
-    f.write("\n")
-with open(tmp, encoding="utf-8") as f:
-    json.load(f)
-os.chmod(tmp, modo)
-os.replace(tmp, atual)
-print("REPOSTAS=" + str(len(repostas)))
-print("FALTAM=" + ",".join(faltam))
+        antigo = {}
+mudou = False
+repostas, faltam_env, faltam_marc = 0, [], []
+# 1. env
+env = d.get("env") if isinstance(d, dict) else None
+env_ant = antigo.get("env") if isinstance(antigo, dict) else None
+if isinstance(env, dict):
+    for k in [k for k, v in env.items() if v == ""]:
+        v = env_ant.get(k) if isinstance(env_ant, dict) else None
+        if isinstance(v, str) and v != "":
+            env[k] = v; repostas += 1
+        else:
+            del env[k]; faltam_env.append(k)
+        mudou = True
+# 2. marcador: só repõe se a .anterior tiver UM texto igual fora do marcador
+textos_ant = []
+def coletar(o):
+    if isinstance(o, dict):
+        for v in o.values(): coletar(v)
+    elif isinstance(o, list):
+        for v in o: coletar(v)
+    elif isinstance(o, str) and MARCADOR not in o:
+        textos_ant.append(o)
+coletar(antigo)
+def repor(o, cam):
+    global mudou, repostas
+    if isinstance(o, dict):
+        return {k: repor(v, f"{cam}.{k}" if cam else k) for k, v in o.items()}
+    if isinstance(o, list):
+        return [repor(v, f"{cam}[{i}]") for i, v in enumerate(o)]
+    if isinstance(o, str) and MARCADOR in o:
+        rx = re.compile("(?s)" + "(.+?)".join(re.escape(p) for p in o.split(MARCADOR)) + r"\Z")
+        achados = {t for t in textos_ant if rx.match(t)}
+        if len(achados) == 1:
+            mudou = True; repostas += 1
+            return achados.pop()
+        faltam_marc.append(cam)
+    return o
+d = repor(d, "")
+if mudou:
+    modo = os.stat(atual).st_mode & 0o777
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(atual), prefix=".settings.", suffix=".tmp")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        if d == antigo:
+            # ficou igual ao de antes: grava o arquivo de antes, com a formatação original
+            with open(anterior, encoding="utf-8") as a:
+                f.write(a.read())
+        else:
+            json.dump(d, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+    with open(tmp, encoding="utf-8") as f:
+        json.load(f)
+    os.chmod(tmp, modo)
+    os.replace(tmp, atual)
+print("REPOSTAS=" + str(repostas))
+print("FALTAM_ENV=" + ",".join(faltam_env))
+print("FALTAM_MARC=" + ",".join(faltam_marc))
 PY
 )"; then
-    N_REPOSTAS="$(printf '%s\n' "$ENV_SAIDA" | sed -n 's/^REPOSTAS=//p')"
-    ENV_FALTAM="$(printf '%s\n' "$ENV_SAIDA" | sed -n 's/^FALTAM=//p')"
-    [[ -n "$N_REPOSTAS" && "$N_REPOSTAS" != "0" ]] && \
-      ok "$N_REPOSTAS valor(es) do bloco env repostos a partir da pasta anterior"
-    if [[ -n "$ENV_FALTAM" ]]; then
-      warn "Estas chaves do bloco env vieram sem valor e foram retiradas do ~/.claude/settings.json:"
-      printf '%s\n' "$ENV_FALTAM" | tr ',' '\n' | sed 's/^/      • /'
-      warn "Se precisar delas, acrescente de novo com o valor certo."
-    fi
-    [[ -z "$ENV_SAIDA" ]] && ok "Nenhuma chave do bloco env para repor"
-  else
-    warn "Não consegui ajustar o bloco env do ~/.claude/settings.json — confira à mão."
+        N_REPOSTAS="$(printf '%s\n' "$SAIDA" | sed -n 's/^REPOSTAS=//p')"
+        FALTAM_ENV="$(printf '%s\n' "$SAIDA" | sed -n 's/^FALTAM_ENV=//p')"
+        FALTAM_MARC="$(printf '%s\n' "$SAIDA" | sed -n 's/^FALTAM_MARC=//p')"
+        [[ -n "$N_REPOSTAS" && "$N_REPOSTAS" != "0" ]] && \
+          ok "$nome_settings: $N_REPOSTAS valor(es) repostos a partir da pasta anterior"
+        if [[ -n "$FALTAM_ENV" ]]; then
+          warn "$nome_settings: estas chaves do bloco env vieram sem valor e foram retiradas:"
+          printf '%s\n' "$FALTAM_ENV" | tr ',' '\n' | sed 's/^/      • /'
+          warn "Se precisar delas, acrescente de novo com o valor certo."
+        fi
+        if [[ -n "$FALTAM_MARC" ]]; then
+          warn "$nome_settings: preencha o token no lugar de <<removido-pelo-backup>> em:"
+          printf '%s\n' "$FALTAM_MARC" | tr ',' '\n' | sed 's/^/      • /'
+          warn "Um hook com o marcador não funciona até ser preenchido."
+        fi
+      else
+        warn "Não consegui ajustar o ~/.claude/$nome_settings — confira o bloco env à mão."
+      fi
+    done
   fi
 fi
+
+trap - INT TERM
 
 # ── Validação pós-restore ─────────────────────────────────────────────────────
 section "Validação"
@@ -422,13 +593,23 @@ check_exists ".claude/CLAUDE.md"        "CLAUDE.md"
 check_exists ".claude/settings.json"    "settings.json"
 check_exists ".claude/skills"           "Skills"
 check_exists ".claude/hooks"            "Hooks"
-check_exists "claude/projetos"          "Projetos"
+[[ "$SNAP_DESTINO" == "nuvem" ]] || check_exists "claude/projetos" "Projetos"
 
 # ── Resumo final ──────────────────────────────────────────────────────────────
 section "Concluído"
 
 WARN_MSG=""
 [[ $WARNINGS -gt 0 ]] && WARN_MSG="\n${YELLOW}  ⚠ $WARNINGS aviso(s) acima — verifique se é esperado${RESET}\n"
+
+if [[ "$SNAP_DESTINO" == "nuvem" ]]; then
+  RESTAURADO_MSG="\n  • ~/.claude/  — só as configurações (backup feito para a nuvem)\n  • ~/claude/   — não estava no backup; ficou como estava"
+elif [[ "$SNAP_SEGREDOS" == "nao" ]]; then
+  RESTAURADO_MSG="\n  • ~/.claude/  — configurações, skills, hooks, memória (sem login, senhas e chaves)\n  • ~/claude/   — projetos e chats (sem .env e chaves)"
+else
+  RESTAURADO_MSG="\n  • ~/.claude/  — configurações, skills, hooks, memória\n  • ~/claude/   — projetos e chats"
+fi
+[[ -n "$ANTERIORES_MSG" ]] && \
+  RESTAURADO_MSG="${RESTAURADO_MSG}\n  O que o backup deixou de fora de propósito voltou da pasta anterior (contagem acima)."
 
 SAFETY_MSG=""
 [[ -n "$ANTERIORES_MSG" ]] && \
@@ -437,9 +618,7 @@ SAFETY_MSG=""
 echo -e "
 ${GREEN}${BOLD}✓ Restore concluído com sucesso!${RESET}
 ${WARN_MSG}
-${BOLD}O que foi restaurado:${RESET}
-  • ~/.claude/  — configurações, skills, hooks, memória
-  • ~/claude/   — projetos e chats
+${BOLD}O que foi restaurado:${RESET}${RESTAURADO_MSG}
 ${SAFETY_MSG}
 ${BOLD}Próximos passos:${RESET}
   1. Abra o Claude Code: ${BLUE}claude${RESET}

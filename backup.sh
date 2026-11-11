@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
 # Claude Code Backup — by Tadeu Rosa
-# Versão: 1.1.0
+# Versão: 1.2.0
 # Licença: CC BY-NC-ND 4.0 — uso pessoal permitido, redistribuição proibida
 # ─────────────────────────────────────────────────────────────────────────────
 # O QUE ESTE SCRIPT FAZ:
@@ -9,11 +9,13 @@
 #   Documentos, fotos, vídeos e demais arquivos NÃO são incluídos.
 #
 #   Destino na NUVEM (iCloud, Google Drive, OneDrive, Dropbox):
-#     • de ~/.claude/ só vão as configurações (lista fixa abaixo);
-#     • login, histórico e textos das conversas, .env e chaves ficam na máquina;
-#     • o settings.json vai com os valores do bloco "env" apagados.
+#     • de ~/.claude/ só vão as configurações (lista fixa); ~/claude/ não vai;
+#     • login, histórico e textos das conversas, .env, chaves e tokens ficam;
+#     • o settings.json vai com o "env" vazio e tokens trocados por marcador.
 #   Destino LOCAL (pendrive, disco externo, pasta local):
 #     • vai tudo; pergunta se inclui login, senhas (.env) e chaves.
+#   O snapshot leva a lista do que ficou de fora (só nomes), para o
+#   restore.sh trazer de volta da pasta anterior nesta mesma máquina.
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -67,7 +69,8 @@ cat << 'SCOPE'
 ║  ✗  Aplicativos instalados        → NÃO incluídos           ║
 ║  ✗  Demais arquivos do usuário    → NÃO incluídos           ║
 ║                                                              ║
-║  Na nuvem, login, histórico, .env e chaves NÃO vão.          ║
+║  Na nuvem: só configurações. Projetos, login, histórico,     ║
+║  .env e chaves NÃO vão.                                      ║
 ║                                                              ║
 ║  Para backup completo da máquina use:                        ║
 ║    • Mac:     Time Machine                                   ║
@@ -262,8 +265,8 @@ EXCLUDE_CHATS=false
 INCLUDE_SECRETS=false
 
 if $DEST_IS_CLOUD; then
-  warn "Destino na nuvem. Vão só as configurações do Claude Code e os seus projetos."
-  warn "Ficam na máquina: login, histórico e textos das conversas, senhas (.env) e chaves."
+  warn "Destino na nuvem. Vão só as configurações do Claude Code."
+  warn "Ficam na máquina: os projetos (~/claude), login, histórico e textos das conversas, senhas (.env) e chaves."
   EXCLUDE_CHATS=true
 else
   ok "Destino local (pendrive, disco ou pasta que não sincroniza)."
@@ -284,8 +287,10 @@ else
   fi
 
   echo ""
-  echo -e "${BOLD}Login do Claude Code, senhas de projetos (.env) e chaves (.pem, .key).${RESET}"
+  echo -e "${BOLD}Login do Claude Code, senhas de projetos (.env), chaves e cópias de configuração.${RESET}"
   echo -e "  Inclua só se o destino for um pendrive ou disco que só você usa."
+  echo -e "  Se responder não, ${BOLD}vão mesmo assim${RESET}: o histórico das conversas (pode ter o que você colou)"
+  echo -e "  e outros arquivos com senha dentro dos projetos, como secrets.toml e token.json."
   echo ""
   read -rp "  Incluir login, senhas (.env) e chaves? [s/N]: " SECRETS_CONFIRM
   case "$(echo "$SECRETS_CONFIRM" | tr '[:upper:]' '[:lower:]')" in
@@ -325,135 +330,500 @@ section "Criando snapshot"
 [[ -d "$HOME/.claude" || -d "$HOME/claude" ]] || \
   error "Nenhuma pasta do Claude Code encontrada em $HOME"
 
+command -v python3 &>/dev/null || \
+  error "Precisa do python3 para separar o que é senha do que é configuração.\n  Mac: xcode-select --install   ·   Linux: sudo apt install python3"
+
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 SNAPSHOT_NAME="claude-code-snapshot-${TIMESTAMP}.tar.gz"
 SNAPSHOT_PATH="$DEST_PATH/$SNAPSHOT_NAME"
 
-# Pasta de trabalho: uma "raiz" com atalhos para as pastas reais. O tar lê
-# tudo dela, então o settings.json limpo e o arquivo de informação entram no
-# mesmo snapshot sem copiar as pastas grandes.
+# Pasta de trabalho: uma "raiz" montada item a item. Pastas viram atalhos para
+# as pastas reais (o tar lê através deles); arquivos são copiados depois dos
+# filtros; o settings.json entra já limpo. Nada nas suas pastas é alterado.
 TMP_WORK="$(mktemp -d)"
 trap 'rm -rf "$TMP_WORK"' EXIT
 RAIZ="$TMP_WORK/raiz"
-LISTA="$TMP_WORK/lista"
 TAR_LOG="$TMP_WORK/tar.log"
 mkdir -p "$RAIZ"
-: > "$LISTA"
 
-# Arquivos que nunca entram (o próprio snapshot, se o destino estiver dentro das pastas)
-FILTRO=( ! -name 'claude-code-snapshot-*.tar.gz' )
-# Login, senhas e chaves
-if $DEST_IS_CLOUD || ! $INCLUDE_SECRETS; then
-  FILTRO+=( ! -name '.credentials.json'
-            ! -name '.env'
-            ! \( -name '.env.*' ! -name '.env.example' \)
-            ! -name '*.pem'
-            ! -name '*.key' )
-fi
-# Pastas que não entram
-PODA=( -path './__nenhuma__' )
-$DEST_IS_CLOUD && PODA+=( -o -path '.claude/skills/.trash' )
-$EXCLUDE_CHATS && PODA+=( -o -path 'claude/chats' )
+SEG_FORA=0; $DEST_IS_CLOUD && SEG_FORA=1; $INCLUDE_SECRETS || SEG_FORA=1
+NUVEM=0; $DEST_IS_CLOUD && NUVEM=1
+SEM_CHATS=0; $EXCLUDE_CHATS && SEM_CHATS=1
 
-# listar <caminho relativo ao HOME> → acrescenta os arquivos à lista
-listar() {
-  ( cd "$HOME" && find -H "$1" \( "${PODA[@]}" \) -prune -o \
-      \( -type f -o -type l \) "${FILTRO[@]}" -print0 2>/dev/null ) >> "$LISTA" || true
-}
-na_lista() { printf '%s\0' "$1" >> "$LISTA"; }
+info "Separando o que entra..."
+if ! python3 - "$HOME" "$RAIZ" "$TMP_WORK" "$NUVEM" "$SEG_FORA" "$SEM_CHATS" <<'PY'
+import fnmatch, json, os, re, shutil, stat, sys
 
-SETTINGS_STATUS=""
+HOME, RAIZ, WORK = sys.argv[1:4]
+NUVEM, SEG_FORA, SEM_CHATS = (a == "1" for a in sys.argv[4:7])
+MARCADOR = "<<removido-pelo-backup>>"
+LIMITE_LEITURA = 5 * 1024 * 1024
 
-if $DEST_IS_CLOUD; then
-  # ~/.claude por LISTA DO QUE ENTRA: só configurações
-  # (code.claude.com/docs/en/claude-directory, tabela "File reference")
-  if [[ -d "$HOME/.claude" ]]; then
-    mkdir -p "$RAIZ/.claude"
-    for item in skills hooks commands agents rules output-styles workflows agent-memory memory; do
-      if [[ -d "$HOME/.claude/$item" ]]; then
-        ln -s "$HOME/.claude/$item" "$RAIZ/.claude/$item"
-        listar ".claude/$item"
-      fi
-    done
-    for item in CLAUDE.md keybindings.json; do
-      if [[ -f "$HOME/.claude/$item" ]]; then
-        cp "$HOME/.claude/$item" "$RAIZ/.claude/$item"
-        na_lista ".claude/$item"
-      fi
-    done
-    # Memória automática de cada projeto
-    for m in "$HOME"/.claude/projects/*/memory; do
-      [[ -d "$m" ]] || continue
-      rel="${m#"$HOME"/}"
-      mkdir -p "$RAIZ/$(dirname "$rel")"
-      ln -s "$m" "$RAIZ/$rel"
-      listar "$rel"
-    done
-    # settings.json sem os valores do bloco "env"
-    if [[ -f "$HOME/.claude/settings.json" ]]; then
-      if command -v python3 &>/dev/null && python3 - "$HOME/.claude/settings.json" "$RAIZ/.claude/settings.json" <<'PY' 2>/dev/null
-import json, sys
-src, dst = sys.argv[1], sys.argv[2]
-with open(src, encoding="utf-8") as f:
-    d = json.load(f)
-env = d.get("env")
-if isinstance(env, dict):
-    d["env"] = {k: "" for k in env}
-with open(dst, "w", encoding="utf-8") as f:
-    json.dump(d, f, indent=2, ensure_ascii=False)
-    f.write("\n")
+lista = open(os.path.join(WORK, "lista"), "wb")
+regras = open(os.path.join(WORK, "regras"), "wb")
+fatal, fora_topo, fora_nomes, atalhos_info, atalhos_fora, refs_fora = [], [], [], [], [], []
+settings_msgs = []
+sumidos = [0]
+
+def add(rel):
+    lista.write(os.fsencode(rel) + b"\0")
+
+def regra(tipo, rel):
+    regras.write(os.fsencode(tipo + "\t" + rel) + b"\0")
+
+# ── Tokens (D11): formato inteiro, nunca no meio de palavra ──
+TOKEN_RES = [re.compile(p) for p in (
+    r"(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}",
+    r"(?<![A-Za-z0-9])gh[po]_[A-Za-z0-9]{36}(?![A-Za-z0-9])",
+    r"(?<![A-Za-z0-9])github_pat_[A-Za-z0-9_]{40,}",
+    r"(?<![A-Za-z0-9])xox[abpr]-[A-Za-z0-9-]{20,}",
+    r"(?<![A-Za-z0-9])AKIA[A-Z0-9]{16}(?![A-Z0-9])",
+    r"(?<![A-Za-z0-9])AIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])",
+    r"(?<![A-Za-z0-9])glpat-[A-Za-z0-9_-]{20,}",
+)]
+RE_CONTEXTO = re.compile(r"(?i)(?:bearer |token=|key=|--token |authorization: )([A-Za-z0-9_+/=%-]{20,})")
+RE_LONGO = re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])")
+
+def trechos_token(s):
+    sp = []
+    for r in TOKEN_RES:
+        sp += [(m.start(), m.end()) for m in r.finditer(s)]
+    for m in RE_CONTEXTO.finditer(s):
+        v = m.group(1)
+        if re.search(r"[0-9]", v) and re.search(r"[A-Z]", v) and re.search(r"[a-z]", v):
+            sp.append((m.start(1), m.end(1)))
+    sp.sort()
+    juntos = []
+    for a, b in sp:
+        if juntos and a <= juntos[-1][1]:
+            juntos[-1] = (juntos[-1][0], max(b, juntos[-1][1]))
+        else:
+            juntos.append((a, b))
+    return juntos
+
+# ── Chaves (D8) ──
+CHAVE_EXT = (".pem", ".key", ".p12", ".pfx", ".jks", ".keystore")
+CHAVE_PREF = ("id_rsa", "id_ed25519", "id_ecdsa", "id_dsa")
+RE_PRIVADA = re.compile(rb"(?m)^-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
+COPIAS_CONFIG = ("settings*.json.*", ".settings*.json*", ".mcp.json", "*.mcp.json*", "claude-json.backup*")
+
+def ler_texto(p):
+    """Conteúdo de arquivo de texto até 5 MB; None se binário ou grande."""
+    if os.path.getsize(p) > LIMITE_LEITURA:
+        return None
+    with open(p, "rb") as f:
+        dados = f.read()
+    return None if b"\0" in dados[:8192] else dados
+
+def inofensivo(p, nome_min):
+    if nome_min.endswith(".key"):
+        with open(p, "rb") as f:
+            return f.read(4) == b"PK\x03\x04"          # Keynote (zip)
+    if nome_min.endswith(".pem") and os.path.getsize(p) <= LIMITE_LEITURA:
+        with open(p, "rb") as f:
+            d = f.read()
+        return b"-----BEGIN CERTIFICATE-----" in d and b"PRIVATE KEY" not in d
+    return False
+
+def motivo_fora(p, nome, topo_claude):
+    if nome.startswith("claude-code-snapshot-") and nome.endswith(".tar.gz"):
+        return "pular"
+    if SEG_FORA:
+        if nome == ".credentials.json":
+            return "login"
+        if nome == ".env" or (nome.startswith(".env.") and nome != ".env.example"):
+            return "senha (.env)"
+        nm = nome.lower()
+        if nm.endswith(CHAVE_EXT) or nome.startswith(CHAVE_PREF):
+            if not inofensivo(p, nm):
+                return "chave"
+        if topo_claude and not NUVEM and any(fnmatch.fnmatchcase(nome, g) for g in COPIAS_CONFIG):
+            return "cópia de configuração"
+    if NUVEM and nome in ("token.json", "credentials.json", "secrets.toml"):
+        return "arquivo de senha"
+    if SEG_FORA:
+        dados = ler_texto(p)
+        if dados is not None:
+            if RE_PRIVADA.search(dados):
+                return "chave privada no conteúdo"
+            if NUVEM and trechos_token(dados.decode("utf-8", "replace")):
+                return "token no conteúdo"
+    return None
+
+REAL_CLAUDE = os.path.realpath(os.path.join(HOME, ".claude"))
+REAL_WORK = os.path.realpath(os.path.join(HOME, "claude"))
+
+def dentro(t, base):
+    return t == base or t.startswith(base + os.sep)
+
+def no_backup(t):
+    return dentro(t, REAL_CLAUDE) or (not NUVEM and dentro(t, REAL_WORK))
+
+def atalho_interno(rel, p):
+    add(rel)  # o tar grava o atalho como atalho
+    if not no_backup(os.path.realpath(p)):
+        atalhos_fora.append(rel + " -> " + os.readlink(p))
+
+def poda(rel, nome):
+    if NUVEM and nome == ".git":
+        return True
+    if NUVEM and rel == ".claude/skills/.trash":
+        return True
+    if SEM_CHATS and rel == "claude/chats":
+        return True
+    return False
+
+EXCLUIR_REAIS = set()
+
+def arquivo(rel, p, nome, topo_claude=False, destino=None):
+    """Filtra e acrescenta um arquivo. destino: copiar para a RAIZ (senão é lido pelo atalho)."""
+    if EXCLUIR_REAIS and os.path.realpath(p) in EXCLUIR_REAIS:
+        regra("arquivo", rel)
+        fora_nomes.append(f"settings original (foi a cópia limpa em .claude/): {rel}")
+        return
+    try:
+        st = os.lstat(p)
+        if not stat.S_ISREG(st.st_mode):
+            return
+        m = motivo_fora(p, nome, topo_claude)
+    except FileNotFoundError:
+        sumidos[0] += 1
+        return
+    except OSError as e:
+        fatal.append(f"{rel}: {e.strerror}")
+        return
+    if m == "pular":
+        return
+    if m:
+        regra("arquivo", rel)
+        fora_nomes.append(f"{m}: {rel}")
+        return
+    if destino:
+        os.makedirs(os.path.dirname(destino), exist_ok=True)
+        shutil.copy2(p, destino)
+    add(rel)
+
+def percorrer(rel_raiz, real_raiz):
+    """Tudo ABAIXO de real_raiz (a pasta em si não entra na lista)."""
+    def erro(e):
+        if isinstance(e, FileNotFoundError):
+            sumidos[0] += 1
+        else:
+            fatal.append(f"{e.filename}: {e.strerror}")
+    for dirpath, dirnames, filenames in os.walk(real_raiz, onerror=erro):
+        rel_dir = rel_raiz + dirpath[len(real_raiz):]
+        manter = []
+        for d in sorted(dirnames):
+            p, r = os.path.join(dirpath, d), rel_dir + "/" + d
+            if os.path.islink(p):
+                atalho_interno(r, p)
+            elif poda(r, d):
+                regra("pasta", r)
+                fora_nomes.append(("histórico do git" if d == ".git" else "pasta fora") + f": {r}")
+            else:
+                add(r)
+                manter.append(d)
+        dirnames[:] = manter
+        for f in sorted(filenames):
+            p, r = os.path.join(dirpath, f), rel_dir + "/" + f
+            if os.path.islink(p):
+                atalho_interno(r, p)
+            else:
+                arquivo(r, p, f)
+
+def incluir_pasta(rel, p):
+    try:
+        vazia = not os.listdir(p)
+    except OSError as e:
+        fatal.append(f"{rel}: {e.strerror}")
+        return
+    if vazia:
+        os.makedirs(os.path.join(RAIZ, rel), exist_ok=True)
+        os.chmod(os.path.join(RAIZ, rel), stat.S_IMODE(os.stat(p).st_mode))
+        add(rel)
+    else:
+        os.symlink(p, os.path.join(RAIZ, rel))
+        percorrer(rel, p)
+
+# ── settings.json / settings.local.json sem segredos (D11) ──
+def limpar_settings(rel, p):
+    try:
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        regra("arquivo", rel)
+        fora_nomes.append(f"não é JSON válido, ficou fora: {rel}")
+        return
+    trocados, longos = [], []
+    def so_avisar(o, cam):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                so_avisar(v, f"{cam}.{k}")
+        elif isinstance(o, list):
+            for i, v in enumerate(o):
+                so_avisar(v, f"{cam}[{i}]")
+        elif isinstance(o, str) and RE_LONGO.search(o):
+            longos.append(cam)
+    def limpar(o, cam):
+        if isinstance(o, dict):
+            for k in list(o):
+                c = f"{cam}.{k}" if cam else k
+                if not cam and k == "env" and isinstance(o[k], dict):
+                    o[k] = {kk: "" for kk in o[k]}
+                elif (not cam and k in ("permissions", "enabledPlugins")) or k == "matcher":
+                    so_avisar(o[k], c)
+                else:
+                    o[k] = limpar(o[k], c)
+            return o
+        if isinstance(o, list):
+            return [limpar(v, f"{cam}[{i}]") for i, v in enumerate(o)]
+        if isinstance(o, str):
+            sp = trechos_token(o)
+            if sp:
+                partes, ult = [], 0
+                for a, b in sp:
+                    partes += [o[ult:a], MARCADOR]
+                    ult = b
+                o = "".join(partes) + o[ult:]
+                trocados.append(cam)
+            if RE_LONGO.search(o.replace(MARCADOR, "")):
+                longos.append(cam)
+        return o
+    if isinstance(d, dict):
+        d = limpar(d, "")
+    destino = os.path.join(RAIZ, rel)
+    with open(destino, "w", encoding="utf-8") as f:
+        json.dump(d, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    add(rel)
+    settings_msgs.append(f"{rel}: valores do bloco env apagados")
+    for c in trocados:
+        settings_msgs.append(f"{rel}: token trocado pelo marcador em {c}")
+    for c in longos:
+        settings_msgs.append(f"{rel}: sequência longa mantida (confira se não é senha) em {c}")
+
+# ── Arquivos que o settings.json usa (só nuvem) ──
+def citados():
+    p = os.path.join(HOME, ".claude", "settings.json")
+    try:
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return set()
+    textos = []
+    sl = d.get("statusLine") if isinstance(d, dict) else None
+    if isinstance(sl, dict) and isinstance(sl.get("command"), str):
+        textos.append(sl["command"])
+    hooks = d.get("hooks") if isinstance(d, dict) else None
+    if isinstance(hooks, dict):
+        for grupos in hooks.values():
+            for g in grupos if isinstance(grupos, list) else []:
+                for h in (g.get("hooks") or []) if isinstance(g, dict) else []:
+                    if isinstance(h, dict) and isinstance(h.get("command"), str):
+                        textos.append(h["command"])
+    rx = re.compile(r"(?:~|\$HOME|\$\{HOME\}|" + re.escape(HOME) + r")/\.claude/([^\s'\"`;|&<>()]+)")
+    achados = set()
+    for t in textos:
+        for m in rx.finditer(t):
+            r = os.path.normpath(m.group(1))
+            if not r.startswith("..") and os.path.isfile(os.path.join(HOME, ".claude", r)):
+                achados.add(r)
+    return achados
+
+# ── ~/.claude, item a item ──
+PASTAS_NUVEM = {"skills", "hooks", "commands", "agents", "rules", "output-styles",
+                "workflows", "agent-memory", "memory", "themes"}
+ARQUIVOS_NUVEM = {"CLAUDE.md", "keybindings.json", "settings.json"}
+REAL_HOME = os.path.realpath(HOME)
+
+base = os.path.join(HOME, ".claude")
+if os.path.isdir(base):
+    os.makedirs(os.path.join(RAIZ, ".claude"))
+    refs = citados() if NUVEM else set()
+    for nome in sorted(os.listdir(base)):
+        p, r = os.path.join(base, nome), ".claude/" + nome
+        # Atalho no primeiro nível (ex.: skills -> ~/claude/skills)
+        if os.path.islink(p):
+            alvo = os.path.realpath(p)
+            if not os.path.exists(alvo):
+                os.symlink(os.readlink(p), os.path.join(RAIZ, r))
+                add(r)
+                atalhos_fora.append(r + " -> " + os.readlink(p))
+                continue
+            rel_alvo = os.path.relpath(alvo, REAL_HOME) if dentro(alvo, REAL_HOME) else None
+            permitido = (not NUVEM) or nome in PASTAS_NUVEM or nome in ARQUIVOS_NUVEM
+            if rel_alvo is None:
+                if permitido:
+                    fora_nomes.append(f"atalho para fora da pasta pessoal, foi o conteúdo: {r}")
+            else:
+                atalhos_info.append(f"{r}|{rel_alvo}")
+                eh_settings = SEG_FORA and nome in ("settings.json", "settings.local.json") and os.path.isfile(alvo)
+                vai_junto = (not NUVEM and not eh_settings and (rel_alvo == "claude" or rel_alvo.startswith("claude/"))
+                             and not (SEM_CHATS and (rel_alvo == "claude/chats" or rel_alvo.startswith("claude/chats/"))))
+                if eh_settings and not NUVEM:
+                    EXCLUIR_REAIS.add(alvo)  # o original em ~/claude não vai; vai a cópia limpa
+                if vai_junto or not permitido:
+                    if not permitido:
+                        fora_topo.append(nome + " (atalho)")
+                    continue
+            if not permitido:
+                fora_topo.append(nome)
+                regra("pasta" if os.path.isdir(alvo) else "arquivo", r)
+            elif os.path.isdir(alvo):
+                incluir_pasta(r, alvo)
+            elif SEG_FORA and nome in ("settings.json", "settings.local.json"):
+                limpar_settings(r, alvo)
+            else:
+                arquivo(r, alvo, nome, True, os.path.join(RAIZ, r))
+            continue
+        if os.path.isdir(p):
+            if NUVEM and nome == "projects":
+                regra("resto", r)
+                fora_topo.append("projects (só a memória de cada projeto foi)")
+                for proj in sorted(os.listdir(p)):
+                    m = os.path.join(p, proj, "memory")
+                    if os.path.isdir(m) and not os.path.islink(m):
+                        rm = f"{r}/{proj}/memory"
+                        os.makedirs(os.path.join(RAIZ, r, proj), exist_ok=True)
+                        incluir_pasta(rm, m)
+                continue
+            if NUVEM and nome not in PASTAS_NUVEM:
+                dentro_dela = sorted(x for x in refs if x.startswith(nome + "/"))
+                if dentro_dela:
+                    regra("resto", r)
+                    fora_topo.append(nome + " (só os arquivos que o settings.json usa foram)")
+                    for x in dentro_dela:
+                        arquivo(".claude/" + x, os.path.join(base, x), os.path.basename(x),
+                                False, os.path.join(RAIZ, ".claude", x))
+                else:
+                    regra("pasta", r)
+                    fora_topo.append(nome)
+                continue
+            if not NUVEM and SEG_FORA and nome == "backups":
+                regra("pasta", r)
+                fora_nomes.append(f"cópia de configuração: {r}")
+                continue
+            incluir_pasta(r, p)
+        elif os.path.isfile(p):
+            if SEG_FORA and nome in ("settings.json", "settings.local.json") and (not NUVEM or nome == "settings.json"):
+                limpar_settings(r, p)
+                continue
+            if NUVEM and nome not in ARQUIVOS_NUVEM and nome not in refs:
+                regra("arquivo", r)
+                fora_topo.append(nome)
+                continue
+            arquivo(r, p, nome, True, os.path.join(RAIZ, r))
+
+# ── ~/claude (projetos): só no backup local ──
+base = os.path.join(HOME, "claude")
+if not NUVEM and os.path.isdir(base):
+    os.symlink(base, os.path.join(RAIZ, "claude"))
+    percorrer("claude", base)
+
+# Arquivos citados no settings.json que não puderam ir
+if NUVEM and os.path.isdir(os.path.join(HOME, ".claude")):
+    for x in sorted(refs):
+        if any(l.endswith(": .claude/" + x) for l in fora_nomes):
+            refs_fora.append(".claude/" + x)
+
+lista.close(); regras.close()
+
+def gravar(nome, linhas):
+    with open(os.path.join(WORK, nome), "w", encoding="utf-8", errors="surrogateescape") as f:
+        for l in linhas:
+            f.write(l + "\n")
+
+gravar("fatal", fatal)
+gravar("fora_topo", fora_topo)
+gravar("fora_nomes", fora_nomes)
+gravar("atalhos_info", atalhos_info)
+gravar("atalhos_fora", atalhos_fora)
+gravar("refs_fora", refs_fora)
+gravar("settings_msgs", settings_msgs)
+gravar("sumidos", [str(sumidos[0])])
 PY
-      then
-        na_lista ".claude/settings.json"
-        SETTINGS_STATUS="limpo"
-        ok "settings.json incluído sem os valores do bloco env"
-      else
-        rm -f "$RAIZ/.claude/settings.json"
-        SETTINGS_STATUS="fora"
-        warn "settings.json ficou fora (precisa do python3 para tirar as chaves do bloco env)"
-      fi
-    fi
-  fi
-  # ~/claude por EXCLUSÃO: sem .env, chaves e chats
-  if [[ -d "$HOME/claude" ]]; then
-    ln -s "$HOME/claude" "$RAIZ/claude"
-    listar "claude"
-  fi
-else
-  [[ -d "$HOME/.claude" ]] && { ln -s "$HOME/.claude" "$RAIZ/.claude"; listar ".claude"; }
-  [[ -d "$HOME/claude"  ]] && { ln -s "$HOME/claude"  "$RAIZ/claude";  listar "claude"; }
+then
+  error "Não consegui separar os arquivos do backup (erro no python3). Nenhum snapshot foi criado."
+fi
+
+if [[ -s "$TMP_WORK/fatal" ]]; then
+  echo ""
+  warn "Não consegui ler estes caminhos (sem permissão ou erro de leitura):"
+  sed 's/^/      • /' "$TMP_WORK/fatal" | head -40
+  error "Backup interrompido para não sair incompleto. Corrija as permissões e rode de novo. Nenhum snapshot foi criado."
 fi
 
 # Informação usada pelo restore.sh (não é restaurada para as pastas)
 if $DEST_IS_CLOUD; then DEST_LABEL="nuvem"; else DEST_LABEL="local"; fi
-if $INCLUDE_SECRETS; then SECRETS_LABEL="sim"; else SECRETS_LABEL="nao"; fi
-printf 'destino=%s\nsegredos=%s\ndata=%s\n' "$DEST_LABEL" "$SECRETS_LABEL" "$TIMESTAMP" \
-  > "$RAIZ/claude-code-backup-info.txt"
-na_lista "claude-code-backup-info.txt"
+if $INCLUDE_SECRETS && ! $DEST_IS_CLOUD; then SECRETS_LABEL="sim"; else SECRETS_LABEL="nao"; fi
+{
+  printf 'destino=%s\nsegredos=%s\ndata=%s\nversao=1.2.0\n' "$DEST_LABEL" "$SECRETS_LABEL" "$TIMESTAMP"
+  sed 's/^/atalho=/' "$TMP_WORK/atalhos_info"
+} > "$RAIZ/claude-code-backup-info.txt"
+cp "$TMP_WORK/regras" "$RAIZ/claude-code-backup-excluidos.txt"
+printf '%s\0' "claude-code-backup-info.txt" "claude-code-backup-excluidos.txt" >> "$TMP_WORK/lista"
 
 info "Comprimindo arquivos..."
 
-if tar -czf "$SNAPSHOT_PATH" -C "$RAIZ" --null -T "$LISTA" 2>"$TAR_LOG"; then
-  # Verifica integridade imediatamente
-  if tar -tzf "$SNAPSHOT_PATH" &>/dev/null; then
-    FINAL_SIZE="$(du -sh "$SNAPSHOT_PATH" 2>/dev/null | cut -f1 || echo '?')"
-    ok "Snapshot criado e verificado: $SNAPSHOT_NAME (${FINAL_SIZE})"
+TAR_SUMIDOS=0
+if ! LC_ALL=C tar --no-recursion -czf "$SNAPSHOT_PATH" -C "$RAIZ" --null -T "$TMP_WORK/lista" 2>"$TAR_LOG"; then
+  # Arquivo que sumiu ou mudou durante a leitura (normal com o Claude Code aberto) não derruba o backup.
+  RUINS="$(grep -v -e 'Error exit delayed from previous errors' \
+                   -e 'Exiting with failure status due to previous errors' \
+                   -e 'No such file or directory' \
+                   -e 'file changed as we read it' \
+                   -e 'File removed before we read it' "$TAR_LOG" || true)"
+  if [[ -s "$TAR_LOG" && -z "$RUINS" ]]; then
+    TAR_SUMIDOS="$(grep -c -e 'No such file or directory' -e 'file changed as we read it' -e 'File removed before we read it' "$TAR_LOG" || true)"
   else
     rm -f "$SNAPSHOT_PATH"
-    error "Snapshot criado mas corrompido — verifique espaço em disco em: $DEST_PATH"
+    tail -5 "$TAR_LOG" >&2 || true
+    error "Falha ao criar snapshot — verifique permissões e espaço em: $DEST_PATH"
   fi
+fi
+
+if LC_ALL=C tar -tzf "$SNAPSHOT_PATH" &>/dev/null; then
+  FINAL_SIZE="$(du -sh "$SNAPSHOT_PATH" 2>/dev/null | cut -f1 || echo '?')"
+  ok "Snapshot criado e verificado: $SNAPSHOT_NAME (${FINAL_SIZE})"
 else
   rm -f "$SNAPSHOT_PATH"
-  tail -5 "$TAR_LOG" >&2 || true
-  error "Falha ao criar snapshot — verifique permissões e espaço em: $DEST_PATH"
+  error "Snapshot criado mas corrompido — verifique espaço em disco em: $DEST_PATH"
 fi
+
+SUMIDOS=$(( $(cat "$TMP_WORK/sumidos") + TAR_SUMIDOS ))
+[[ $SUMIDOS -gt 0 ]] && \
+  warn "$SUMIDOS arquivo(s) mudaram ou sumiram durante o backup (normal com o Claude Code aberto)."
+
+# ── O que ficou de fora ──────────────────────────────────────────────────────
+mostrar_lista() {  # mostrar_lista <arquivo> <título>
+  local n; n="$(wc -l < "$1" | tr -d ' ')"
+  [[ "$n" -gt 0 ]] || return 0
+  echo ""
+  echo -e "${BOLD}$2 ($n):${RESET}"
+  head -40 "$1" | sed 's/^/      • /'
+  [[ "$n" -gt 40 ]] && echo "      … e mais $(( n - 40 ))"
+  return 0
+}
+
+section "O que ficou de fora"
+if $DEST_IS_CLOUD; then
+  echo -e "${BOLD}Os projetos (~/claude) não vão para a nuvem.${RESET} Para levá-los, use pendrive, pasta local ou o GitHub."
+  mostrar_lista "$TMP_WORK/fora_topo" "Itens de ~/.claude que ficaram na máquina"
+fi
+mostrar_lista "$TMP_WORK/fora_nomes" "Arquivos retirados por segurança (só os nomes)"
+mostrar_lista "$TMP_WORK/settings_msgs" "Ajustes no settings"
+if [[ -s "$TMP_WORK/refs_fora" ]]; then
+  mostrar_lista "$TMP_WORK/refs_fora" "O settings.json usa estes arquivos, que não puderam ir"
+fi
+$DEST_IS_CLOUD && info "Scripts chamados por outros scripts não foram conferidos."
+mostrar_lista "$TMP_WORK/atalhos_fora" "Atalhos que apontam para fora do backup (ficam quebrados se o destino não existir)"
+[[ -s "$TMP_WORK/fora_nomes" || -s "$TMP_WORK/fora_topo" ]] && \
+  info "O restore.sh traz de volta o que ficou de fora quando você restaurar nesta mesma máquina."
 
 # ── Aviso final para destinos em nuvem ───────────────────────────────────────
 if $DEST_IS_CLOUD; then
   echo ""
-  echo -e "${BOLD}Na nuvem, da pasta de configuração do Claude Code só foram as configurações. Ficaram na sua máquina: login, histórico e textos das conversas, senhas de projetos (.env) e chaves. Pra levar tudo, use pendrive ou pasta local.${RESET}"
-  [[ "$SETTINGS_STATUS" == "limpo" ]] && \
-    info "O settings.json foi sem os valores do bloco env; o restore.sh lista o que precisar ser preenchido."
+  echo -e "${BOLD}Na nuvem foram só as configurações do Claude Code. Ficaram na sua máquina: os projetos (~/claude), login, histórico e textos das conversas, senhas (.env), chaves e tokens. Pra levar tudo, use pendrive ou pasta local.${RESET}"
 
   echo ""
   echo -e "${BOLD}${YELLOW}"
