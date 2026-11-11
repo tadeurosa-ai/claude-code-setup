@@ -351,25 +351,37 @@ NUVEM=0; $DEST_IS_CLOUD && NUVEM=1
 SEM_CHATS=0; $EXCLUDE_CHATS && SEM_CHATS=1
 
 info "Separando o que entra..."
-if ! python3 - "$HOME" "$RAIZ" "$TMP_WORK" "$NUVEM" "$SEG_FORA" "$SEM_CHATS" <<'PY'
+if ! python3 - "$HOME" "$RAIZ" "$TMP_WORK" "$NUVEM" "$SEG_FORA" "$SEM_CHATS" "$SNAPSHOT_PATH" <<'PY'
 import fnmatch, json, os, re, shutil, stat, sys
 
 HOME, RAIZ, WORK = sys.argv[1:4]
 NUVEM, SEG_FORA, SEM_CHATS = (a == "1" for a in sys.argv[4:7])
 MARCADOR = "<<removido-pelo-backup>>"
-LIMITE_LEITURA = 5 * 1024 * 1024
+PEDACO = 1024 * 1024        # leitura do conteúdo em pedaços de 1 MiB…
+SOBRA = 64 * 1024           # …que se sobrepõem 64 KiB (token cortado na emenda é achado)
 
 lista = open(os.path.join(WORK, "lista"), "wb")
 regras = open(os.path.join(WORK, "regras"), "wb")
 fatal, fora_topo, fora_nomes, atalhos_info, atalhos_fora, refs_fora = [], [], [], [], [], []
-settings_msgs = []
+atalhos_copia, modos, settings_msgs = [], [], []
 sumidos = [0]
+adicionados = set()          # caminhos relativos que entraram na lista
+raizes_reais = []            # pastas reais que entraram (para saber se um atalho aponta para dentro)
+arquivos_reais = set()       # arquivos reais que entraram
+cand_atalhos = []            # atalhos internos, avaliados no fim
 
 def add(rel):
     lista.write(os.fsencode(rel) + b"\0")
+    adicionados.add(rel)
 
 def regra(tipo, rel):
     regras.write(os.fsencode(tipo + "\t" + rel) + b"\0")
+
+def guardar_modo(rel, p):
+    try:
+        modos.append(f"{rel}|{stat.S_IMODE(os.stat(p).st_mode):o}")
+    except OSError:
+        pass
 
 # ── Tokens (D11): formato inteiro, nunca no meio de palavra ──
 TOKEN_RES = [re.compile(p) for p in (
@@ -407,22 +419,48 @@ CHAVE_PREF = ("id_rsa", "id_ed25519", "id_ecdsa", "id_dsa")
 RE_PRIVADA = re.compile(rb"(?m)^-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
 COPIAS_CONFIG = ("settings*.json.*", ".settings*.json*", ".mcp.json", "*.mcp.json*", "claude-json.backup*")
 
-def ler_texto(p):
-    """Conteúdo de arquivo de texto até 5 MB; None se binário ou grande."""
-    if os.path.getsize(p) > LIMITE_LEITURA:
-        return None
+class NaoLeu(Exception):
+    pass
+
+def janelas(p):
+    """Conteúdo do arquivo em pedaços sobrepostos, sem limite de tamanho.
+    Binário (byte zero nos primeiros 8 KiB): nada. Erro de leitura no meio: NaoLeu (falha fechada)."""
     with open(p, "rb") as f:
-        dados = f.read()
-    return None if b"\0" in dados[:8192] else dados
+        resto = b""
+        primeiro = True
+        while True:
+            try:
+                bloco = f.read(PEDACO)
+            except OSError as e:
+                raise NaoLeu(e.strerror)
+            if primeiro:
+                primeiro = False
+                if b"\0" in bloco[:8192]:
+                    return
+            if not bloco:
+                return
+            yield resto + bloco
+            resto = (resto + bloco)[-SOBRA:]
+
+def segredo_no_conteudo(p):
+    for j in janelas(p):
+        if RE_PRIVADA.search(j):
+            return "chave privada no conteúdo"
+        if NUVEM and trechos_token(j.decode("utf-8", "replace")):
+            return "token no conteúdo"
+    return None
 
 def inofensivo(p, nome_min):
     if nome_min.endswith(".key"):
         with open(p, "rb") as f:
             return f.read(4) == b"PK\x03\x04"          # Keynote (zip)
-    if nome_min.endswith(".pem") and os.path.getsize(p) <= LIMITE_LEITURA:
-        with open(p, "rb") as f:
-            d = f.read()
-        return b"-----BEGIN CERTIFICATE-----" in d and b"PRIVATE KEY" not in d
+    if nome_min.endswith(".pem"):
+        cert = False
+        for j in janelas(p):
+            if b"PRIVATE KEY" in j:
+                return False
+            cert = cert or b"-----BEGIN CERTIFICATE-----" in j
+        return cert
     return False
 
 def motivo_fora(p, nome, topo_claude):
@@ -442,27 +480,17 @@ def motivo_fora(p, nome, topo_claude):
     if NUVEM and nome in ("token.json", "credentials.json", "secrets.toml"):
         return "arquivo de senha"
     if SEG_FORA:
-        dados = ler_texto(p)
-        if dados is not None:
-            if RE_PRIVADA.search(dados):
-                return "chave privada no conteúdo"
-            if NUVEM and trechos_token(dados.decode("utf-8", "replace")):
-                return "token no conteúdo"
+        return segredo_no_conteudo(p)
     return None
 
-REAL_CLAUDE = os.path.realpath(os.path.join(HOME, ".claude"))
-REAL_WORK = os.path.realpath(os.path.join(HOME, "claude"))
+REAL_HOME = os.path.realpath(HOME)
 
 def dentro(t, base):
     return t == base or t.startswith(base + os.sep)
 
-def no_backup(t):
-    return dentro(t, REAL_CLAUDE) or (not NUVEM and dentro(t, REAL_WORK))
-
 def atalho_interno(rel, p):
     add(rel)  # o tar grava o atalho como atalho
-    if not no_backup(os.path.realpath(p)):
-        atalhos_fora.append(rel + " -> " + os.readlink(p))
+    cand_atalhos.append((rel, p))
 
 def poda(rel, nome):
     if NUVEM and nome == ".git":
@@ -489,10 +517,15 @@ def arquivo(rel, p, nome, topo_claude=False, destino=None):
     except FileNotFoundError:
         sumidos[0] += 1
         return
-    except OSError as e:
+    except NaoLeu as e:
+        m = f"não deu para conferir o conteúdo inteiro ({e})"
+    except PermissionError as e:
         fatal.append(f"{rel}: {e.strerror}")
         return
+    except OSError as e:
+        m = f"não deu para conferir o conteúdo inteiro ({e.strerror})"
     if m == "pular":
+        regra("arquivo", rel)   # backup antigo guardado aqui: o restore traz de volta da .anterior
         return
     if m:
         regra("arquivo", rel)
@@ -501,10 +534,12 @@ def arquivo(rel, p, nome, topo_claude=False, destino=None):
     if destino:
         os.makedirs(os.path.dirname(destino), exist_ok=True)
         shutil.copy2(p, destino)
+    arquivos_reais.add(os.path.realpath(p))
     add(rel)
 
 def percorrer(rel_raiz, real_raiz):
     """Tudo ABAIXO de real_raiz (a pasta em si não entra na lista)."""
+    raizes_reais.append(os.path.realpath(real_raiz))
     def erro(e):
         if isinstance(e, FileNotFoundError):
             sumidos[0] += 1
@@ -537,9 +572,11 @@ def incluir_pasta(rel, p):
     except OSError as e:
         fatal.append(f"{rel}: {e.strerror}")
         return
+    guardar_modo(rel, p)
     if vazia:
         os.makedirs(os.path.join(RAIZ, rel), exist_ok=True)
         os.chmod(os.path.join(RAIZ, rel), stat.S_IMODE(os.stat(p).st_mode))
+        raizes_reais.append(os.path.realpath(p))
         add(rel)
     else:
         os.symlink(p, os.path.join(RAIZ, rel))
@@ -592,9 +629,12 @@ def limpar_settings(rel, p):
     if isinstance(d, dict):
         d = limpar(d, "")
     destino = os.path.join(RAIZ, rel)
-    with open(destino, "w", encoding="utf-8") as f:
+    fd = os.open(destino, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(d, f, indent=2, ensure_ascii=False)
         f.write("\n")
+    os.chmod(destino, stat.S_IMODE(os.stat(p).st_mode))   # mesma permissão do original
+    arquivos_reais.add(os.path.realpath(p))
     add(rel)
     settings_msgs.append(f"{rel}: valores do bloco env apagados")
     for c in trocados:
@@ -602,14 +642,21 @@ def limpar_settings(rel, p):
     for c in longos:
         settings_msgs.append(f"{rel}: sequência longa mantida (confira se não é senha) em {c}")
 
-# ── Arquivos que o settings.json usa (só nuvem) ──
+# ── Arquivos que o settings.json usa (só nuvem, D6 revista em 11/11) ──
+# Só vai o que é script (pela extensão do arquivo de verdade) e não aparece
+# depois de ">"/">>" (arquivo que o hook grava). O resto é listado na tela.
+PASTAS_NUVEM = {"skills", "hooks", "commands", "agents", "rules", "output-styles",
+                "workflows", "agent-memory", "memory", "themes"}
+ARQUIVOS_NUVEM = {"CLAUDE.md", "keybindings.json", "settings.json"}
+EXT_SCRIPT = (".sh", ".bash", ".zsh", ".fish", ".py", ".js", ".mjs", ".cjs", ".ts", ".rb", ".pl")
+
 def citados():
     p = os.path.join(HOME, ".claude", "settings.json")
     try:
         with open(p, encoding="utf-8") as f:
             d = json.load(f)
     except (OSError, ValueError):
-        return set()
+        return set(), []
     textos = []
     sl = d.get("statusLine") if isinstance(d, dict) else None
     if isinstance(sl, dict) and isinstance(sl.get("command"), str):
@@ -622,24 +669,39 @@ def citados():
                     if isinstance(h, dict) and isinstance(h.get("command"), str):
                         textos.append(h["command"])
     rx = re.compile(r"(?:~|\$HOME|\$\{HOME\}|" + re.escape(HOME) + r")/\.claude/([^\s'\"`;|&<>()]+)")
-    achados = set()
+    aceitos, recusados = set(), {}
     for t in textos:
         for m in rx.finditer(t):
             r = os.path.normpath(m.group(1))
-            if not r.startswith("..") and os.path.isfile(os.path.join(HOME, ".claude", r)):
-                achados.add(r)
-    return achados
+            if r.startswith("..") or r.split("/")[0] in PASTAS_NUVEM or r in ARQUIVOS_NUVEM:
+                continue   # vai (ou não) pelas regras da pasta
+            real = os.path.realpath(os.path.join(HOME, ".claude", r))
+            if not os.path.isfile(real):
+                continue
+            if t[:m.start()].rstrip().endswith(">"):
+                recusados[r] = "o hook grava nele"
+            elif not real.lower().endswith(EXT_SCRIPT):
+                recusados.setdefault(r, "não é script")
+            else:
+                aceitos.add(r)
+    for r in list(recusados):
+        aceitos.discard(r)
+    return aceitos, sorted(recusados.items())
 
 # ── ~/.claude, item a item ──
-PASTAS_NUVEM = {"skills", "hooks", "commands", "agents", "rules", "output-styles",
-                "workflows", "agent-memory", "memory", "themes"}
-ARQUIVOS_NUVEM = {"CLAUDE.md", "keybindings.json", "settings.json"}
-REAL_HOME = os.path.realpath(HOME)
-
 base = os.path.join(HOME, ".claude")
+refs, refs_recusados = set(), []
 if os.path.isdir(base):
     os.makedirs(os.path.join(RAIZ, ".claude"))
-    refs = citados() if NUVEM else set()
+    guardar_modo(".claude", base)
+    if NUVEM:
+        refs, refs_recusados = citados()
+    # settings que é atalho: o original (onde estiver) nunca vai cru; vai a cópia limpa
+    if SEG_FORA:
+        for nm in ("settings.json", "settings.local.json"):
+            p = os.path.join(base, nm)
+            if os.path.islink(p) and os.path.isfile(os.path.realpath(p)):
+                EXCLUIR_REAIS.add(os.path.realpath(p))
     for nome in sorted(os.listdir(base)):
         p, r = os.path.join(base, nome), ".claude/" + nome
         # Atalho no primeiro nível (ex.: skills -> ~/claude/skills)
@@ -651,17 +713,16 @@ if os.path.isdir(base):
                 atalhos_fora.append(r + " -> " + os.readlink(p))
                 continue
             rel_alvo = os.path.relpath(alvo, REAL_HOME) if dentro(alvo, REAL_HOME) else None
-            permitido = (not NUVEM) or nome in PASTAS_NUVEM or nome in ARQUIVOS_NUVEM
+            permitido = (not NUVEM) or nome in PASTAS_NUVEM or nome in ARQUIVOS_NUVEM or nome in refs
+            eh_settings = SEG_FORA and nome in ("settings.json", "settings.local.json") and os.path.isfile(alvo)
             if rel_alvo is None:
                 if permitido:
-                    fora_nomes.append(f"atalho para fora da pasta pessoal, foi o conteúdo: {r}")
+                    atalhos_copia.append(r)
+                    fora_nomes.append(f"atalho para fora da pasta pessoal, foi o conteúdo (volta como pasta comum): {r}")
             else:
                 atalhos_info.append(f"{r}|{rel_alvo}")
-                eh_settings = SEG_FORA and nome in ("settings.json", "settings.local.json") and os.path.isfile(alvo)
                 vai_junto = (not NUVEM and not eh_settings and (rel_alvo == "claude" or rel_alvo.startswith("claude/"))
                              and not (SEM_CHATS and (rel_alvo == "claude/chats" or rel_alvo.startswith("claude/chats/"))))
-                if eh_settings and not NUVEM:
-                    EXCLUIR_REAIS.add(alvo)  # o original em ~/claude não vai; vai a cópia limpa
                 if vai_junto or not permitido:
                     if not permitido:
                         fora_topo.append(nome + " (atalho)")
@@ -671,7 +732,7 @@ if os.path.isdir(base):
                 regra("pasta" if os.path.isdir(alvo) else "arquivo", r)
             elif os.path.isdir(alvo):
                 incluir_pasta(r, alvo)
-            elif SEG_FORA and nome in ("settings.json", "settings.local.json"):
+            elif eh_settings and (not NUVEM or nome == "settings.json"):
                 limpar_settings(r, alvo)
             else:
                 arquivo(r, alvo, nome, True, os.path.join(RAIZ, r))
@@ -680,11 +741,13 @@ if os.path.isdir(base):
             if NUVEM and nome == "projects":
                 regra("resto", r)
                 fora_topo.append("projects (só a memória de cada projeto foi)")
+                guardar_modo(r, p)
                 for proj in sorted(os.listdir(p)):
                     m = os.path.join(p, proj, "memory")
                     if os.path.isdir(m) and not os.path.islink(m):
                         rm = f"{r}/{proj}/memory"
                         os.makedirs(os.path.join(RAIZ, r, proj), exist_ok=True)
+                        guardar_modo(f"{r}/{proj}", os.path.join(p, proj))
                         incluir_pasta(rm, m)
                 continue
             if NUVEM and nome not in PASTAS_NUVEM:
@@ -718,13 +781,34 @@ if os.path.isdir(base):
 base = os.path.join(HOME, "claude")
 if not NUVEM and os.path.isdir(base):
     os.symlink(base, os.path.join(RAIZ, "claude"))
+    guardar_modo("claude", base)
     percorrer("claude", base)
 
-# Arquivos citados no settings.json que não puderam ir
-if NUVEM and os.path.isdir(os.path.join(HOME, ".claude")):
+# O snapshot que está sendo criado agora, se o destino fica dentro das pastas do
+# backup: ganha regra para o restore trazê-lo de volta da .anterior
+SNAP = sys.argv[7]
+real_snap = os.path.join(os.path.realpath(os.path.dirname(SNAP)), os.path.basename(SNAP))
+for raiz_rel in (".claude", "claude"):
+    raiz = os.path.realpath(os.path.join(HOME, raiz_rel))
+    if dentro(real_snap, raiz) and real_snap != raiz:
+        regra("arquivo", raiz_rel + "/" + os.path.relpath(real_snap, raiz))
+
+# Arquivos citados no settings.json que não foram: recusados pela regra ou retirados por segurança
+if NUVEM:
+    for x, motivo in refs_recusados:
+        refs_fora.append(f".claude/{x} ({motivo})")
     for x in sorted(refs):
-        if any(l.endswith(": .claude/" + x) for l in fora_nomes):
-            refs_fora.append(".claude/" + x)
+        if ".claude/" + x not in adicionados:
+            refs_fora.append(f".claude/{x} (retirado por segurança ou não encontrado)")
+
+# Atalhos internos que apontam para fora do que foi no backup
+for rel, p in cand_atalhos:
+    t = os.path.realpath(p)
+    if not (t in arquivos_reais or any(dentro(t, r) for r in raizes_reais)):
+        try:
+            atalhos_fora.append(rel + " -> " + os.readlink(p))
+        except OSError:
+            atalhos_fora.append(rel)
 
 lista.close(); regras.close()
 
@@ -737,6 +821,8 @@ gravar("fatal", fatal)
 gravar("fora_topo", fora_topo)
 gravar("fora_nomes", fora_nomes)
 gravar("atalhos_info", atalhos_info)
+gravar("atalhos_copia", atalhos_copia)
+gravar("modos", modos)
 gravar("atalhos_fora", atalhos_fora)
 gravar("refs_fora", refs_fora)
 gravar("settings_msgs", settings_msgs)
@@ -759,6 +845,8 @@ if $INCLUDE_SECRETS && ! $DEST_IS_CLOUD; then SECRETS_LABEL="sim"; else SECRETS_
 {
   printf 'destino=%s\nsegredos=%s\ndata=%s\nversao=1.2.0\n' "$DEST_LABEL" "$SECRETS_LABEL" "$TIMESTAMP"
   sed 's/^/atalho=/' "$TMP_WORK/atalhos_info"
+  sed 's/^/atalho_fora=/' "$TMP_WORK/atalhos_copia"
+  sed 's/^/modo=/' "$TMP_WORK/modos"
 } > "$RAIZ/claude-code-backup-info.txt"
 cp "$TMP_WORK/regras" "$RAIZ/claude-code-backup-excluidos.txt"
 printf '%s\0' "claude-code-backup-info.txt" "claude-code-backup-excluidos.txt" >> "$TMP_WORK/lista"
@@ -772,9 +860,10 @@ if ! LC_ALL=C tar --no-recursion -czf "$SNAPSHOT_PATH" -C "$RAIZ" --null -T "$TM
                    -e 'Exiting with failure status due to previous errors' \
                    -e 'No such file or directory' \
                    -e 'file changed as we read it' \
-                   -e 'File removed before we read it' "$TAR_LOG" || true)"
+                   -e 'File removed before we read it' \
+                   -e 'File shrank by' "$TAR_LOG" || true)"
   if [[ -s "$TAR_LOG" && -z "$RUINS" ]]; then
-    TAR_SUMIDOS="$(grep -c -e 'No such file or directory' -e 'file changed as we read it' -e 'File removed before we read it' "$TAR_LOG" || true)"
+    TAR_SUMIDOS="$(grep -c -e 'No such file or directory' -e 'file changed as we read it' -e 'File removed before we read it' -e 'File shrank by' "$TAR_LOG" || true)"
   else
     rm -f "$SNAPSHOT_PATH"
     tail -5 "$TAR_LOG" >&2 || true

@@ -21,14 +21,6 @@ warn()    { echo -e "${YELLOW}⚠${RESET} $*"; }
 error()   { echo -e "${RED}✗${RESET} $*" >&2; exit 1; }
 section() { echo -e "\n${BOLD}── $* ──────────────────────────────────────────${RESET}"; }
 
-# Escrita atômica — nunca deixa arquivo parcial
-write_atomic() {
-  local target="$1"; local tmp
-  tmp="$(mktemp "${target}.XXXXXX")"
-  cat > "$tmp"
-  mv "$tmp" "$target"
-}
-
 # ── Detecta OS ────────────────────────────────────────────────────────────────
 OS="$(uname -s)"
 IS_MAC=false; IS_WIN=false
@@ -232,10 +224,10 @@ if [[ -f "$INFO" ]]; then
   SNAP_SEGREDOS="$(sed -n 's/^segredos=//p' "$INFO" | head -1)"
 fi
 REGRAS="$TMP_EXTRACT/claude-code-backup-excluidos.txt"
-SNAP_TEM_SETTINGS=false
-[[ -f "$TMP_EXTRACT/.claude/settings.json" ]] && SNAP_TEM_SETTINGS=true
-SETTINGS_EXISTIA=false
-[[ -f "$HOME/.claude/settings.json" ]] && SETTINGS_EXISTIA=true
+# Cada settings é decidido por ele mesmo: veio do snapshot se o snapshot o traz
+# e (substituir, ou ele não existia aqui antes)
+EXISTIA_SETTINGS=false;       [[ -e "$HOME/.claude/settings.json" ]] && EXISTIA_SETTINGS=true
+EXISTIA_SETTINGS_LOCAL=false; [[ -e "$HOME/.claude/settings.local.json" ]] && EXISTIA_SETTINGS_LOCAL=true
 
 RESTORE_TS="$(date +%Y%m%d-%H%M%S)"
 RESTORED=0
@@ -251,13 +243,17 @@ desfazer() {
   warn "Desfazendo: devolvendo as pastas originais ao lugar..."
   for (( i=${#FEITOS_DEST[@]}-1; i>=0; i-- )); do
     dest="${FEITOS_DEST[$i]}"; ant="${FEITOS_ANT[$i]}"
-    rm -rf "$dest"
     if [[ -n "$ant" ]]; then
+      # .anterior não existe: a troca nem chegou a acontecer, e o destino ainda é o original
+      [[ -e "$ant" || -L "$ant" ]] || continue
+      rm -rf "$dest"
       if mv "$ant" "$dest"; then
         ok "Voltou para o lugar: $dest"
       else
         warn "Não consegui devolver. Sua pasta original está em: $ant"
       fi
+    else
+      rm -rf "$dest"
     fi
   done
   FEITOS_DEST=(); FEITOS_ANT=()
@@ -280,6 +276,14 @@ caminho_ok() {
     /*|..|../*|*/..|*/../*) return 1 ;;
     .claude/*|claude/*) return 0 ;;
     *) return 1 ;;
+  esac
+}
+
+# Destino de atalho vindo do snapshot: relativo à pasta pessoal, sem ".." e sem "/" no início
+destino_ok() {
+  case "$1" in
+    ""|/*|.|..|../*|*/..|*/../*|./*|*/./*|*/.) return 1 ;;
+    *) return 0 ;;
   esac
 }
 
@@ -332,7 +336,7 @@ trazer_por_regras() {
           if [[ ! -e "$dest/$r" && ! -L "$dest/$r" ]]; then
             printf '%s\0' "$r" >> "$lista"; (( TRAZIDOS++ )) || true
           fi
-        done < <(find -H "$base" -print0 2>/dev/null)
+        done < <(find -P "$base" -print0 2>/dev/null)
         ;;
       *) warn "Regra desconhecida ignorada: $tipo" ;;
     esac
@@ -353,14 +357,12 @@ restore_dir() {
 
   if [[ "$RESTORE_MODE" == "replace" ]]; then
     # 1. Tira a pasta atual do lugar (nunca apaga)
-    if [[ -e "$dest" || -L "$dest" ]]; then
-      ant="$dest.anterior-$RESTORE_TS"
-      if ! mv "$dest" "$ant"; then
-        desfazer
-        error "Não consegui mover ~/$src_name para $(basename "$ant"). Nada foi alterado."
-      fi
+    [[ -e "$dest" || -L "$dest" ]] && ant="$dest.anterior-$RESTORE_TS"
+    FEITOS_DEST+=("$dest"); FEITOS_ANT+=("$ant")   # registrado antes da troca (Ctrl+C no meio)
+    if [[ -n "$ant" ]] && ! mv "$dest" "$ant"; then
+      desfazer
+      error "Não consegui mover ~/$src_name para $(basename "$ant"). Nada foi alterado."
     fi
-    FEITOS_DEST+=("$dest"); FEITOS_ANT+=("$ant")
 
     # 2. Copia o snapshot
     if ! cp -Rp "$src" "$dest"; then
@@ -420,7 +422,7 @@ if [[ -f "$INFO" ]] && grep -q '^atalho=' "$INFO"; then
     item="${linha%%|*}"; alvo_rel="${linha#*|}"
     nome_item="${item#.claude/}"
     if [[ "$item" == "$linha" || "$nome_item" == "$item" || "$nome_item" == */* || -z "$nome_item" ]] \
-       || ! caminho_ok "$alvo_rel" ; then
+       || ! destino_ok "$alvo_rel" ; then
       warn "Atalho ignorado (informação inválida no snapshot): $linha"
       continue
     fi
@@ -428,11 +430,11 @@ if [[ -f "$INFO" ]] && grep -q '^atalho=' "$INFO"; then
     if [[ -e "$TMP_EXTRACT/$item" && ! -L "$TMP_EXTRACT/$item" && "$RESTORE_MODE" == "replace" && -e "$link" && ! -L "$link" ]]; then
       # O conteúdo veio no snapshot: vai para o destino do atalho, e o atalho é recriado
       ant_alvo=""
-      if [[ -e "$alvo" || -L "$alvo" ]]; then
-        ant_alvo="$alvo.anterior-$RESTORE_TS"
+      [[ -e "$alvo" || -L "$alvo" ]] && ant_alvo="$alvo.anterior-$RESTORE_TS"
+      FEITOS_DEST+=("$alvo"); FEITOS_ANT+=("$ant_alvo")   # registrado antes da troca (Ctrl+C no meio)
+      if [[ -n "$ant_alvo" ]]; then
         mv "$alvo" "$ant_alvo" || { desfazer; error "Não consegui guardar $alvo. Suas pastas originais voltaram para o lugar."; }
       fi
-      FEITOS_DEST+=("$alvo"); FEITOS_ANT+=("$ant_alvo")
       mkdir -p "$(dirname "$alvo")" && mv "$link" "$alvo" && ln -s "$alvo" "$link" || {
         desfazer
         error "Falha ao recriar o atalho ~/$item. Suas pastas originais voltaram para o lugar."
@@ -455,34 +457,50 @@ if [[ -f "$INFO" ]] && grep -q '^atalho=' "$INFO"; then
   done < <(sed -n 's/^atalho=//p' "$INFO")
 fi
 
+# Atalhos que apontavam para fora da pasta pessoal (ex.: outro disco): o backup levou
+# o conteúdo, sem o caminho; aqui eles voltam como pasta comum
+if [[ -f "$INFO" ]] && grep -q '^atalho_fora=' "$INFO"; then
+  while IFS= read -r item; do
+    nome_item="${item#.claude/}"
+    [[ "$nome_item" != "$item" && -n "$nome_item" && "$nome_item" != */* && "$nome_item" != .. ]] || continue
+    warn "~/$item era atalho para fora da pasta pessoal: voltou como pasta comum (cópia). Se quiser o atalho de volta, recrie-o."
+  done < <(sed -n 's/^atalho_fora=//p' "$INFO")
+fi
+
+# Permissões das pastas que o backup registrou (ex.: ~/.claude só para o dono)
+if [[ "$RESTORE_MODE" == "replace" && -f "$INFO" ]] && grep -q '^modo=' "$INFO"; then
+  while IFS= read -r linha; do
+    rel="${linha%%|*}"; m="${linha#*|}"
+    [[ "$rel" == .claude || "$rel" == claude ]] || caminho_ok "$rel" || continue
+    [[ "$m" =~ ^[0-7]{3,4}$ ]] || continue
+    [[ -d "$HOME/$rel" ]] && chmod "$m" "$HOME/$rel" 2>/dev/null
+  done < <(sed -n 's/^modo=//p' "$INFO")
+fi
+
 
 # ── settings sem segredos: valores do bloco "env" e tokens com marcador ──────
 # Backup para a nuvem ou local sem senhas: o settings vem com o "env" vazio e
 # tokens trocados por <<removido-pelo-backup>>. Aqui: repõe da pasta anterior;
 # sem valor para repor, tira a chave vazia do env / deixa o marcador e lista.
-SETTINGS_VEIO_DO_SNAPSHOT=false
-if $SNAP_TEM_SETTINGS; then
-  if [[ "$RESTORE_MODE" == "replace" ]] || ! $SETTINGS_EXISTIA; then
-    SETTINGS_VEIO_DO_SNAPSHOT=true
-  fi
-fi
-
-if [[ "$SNAP_DESTINO" == "nuvem" || "$SNAP_SEGREDOS" == "nao" ]] && $SETTINGS_VEIO_DO_SNAPSHOT; then
-  section "Chaves do settings"
-  if ! command -v python3 &>/dev/null; then
-    warn "python3 não encontrado: confira o bloco env e os <<removido-pelo-backup>> do ~/.claude/settings.json."
-  else
+REPOR=0; [[ "$SNAP_DESTINO" == "nuvem" || "$SNAP_SEGREDOS" == "nao" ]] && REPOR=1
+SECAO_SETTINGS=false
+if ! command -v python3 &>/dev/null; then
+  [[ $REPOR == 1 ]] && warn "python3 não encontrado: confira o bloco env e os <<removido-pelo-backup>> do ~/.claude/settings.json."
+else
     for nome_settings in settings.json settings.local.json; do
       ATUAL="$HOME/.claude/$nome_settings"
       [[ -f "$TMP_EXTRACT/.claude/$nome_settings" && -f "$ATUAL" ]] || continue
+      if [[ "$nome_settings" == settings.json ]]; then existia=$EXISTIA_SETTINGS; else existia=$EXISTIA_SETTINGS_LOCAL; fi
+      [[ "$RESTORE_MODE" == "replace" ]] || ! $existia || continue   # não veio do snapshot: não mexe
+      if [[ $REPOR == 1 ]] && ! $SECAO_SETTINGS; then section "Chaves do settings"; SECAO_SETTINGS=true; fi
       # settings que era atalho: a versão anterior é a que estava no destino do atalho
       ANTERIOR="$HOME/.claude.anterior-$RESTORE_TS/$nome_settings"
       [[ "$nome_settings" == settings.json && -n "$ANT_ALVO_SETTINGS" ]] && ANTERIOR="$ANT_ALVO_SETTINGS"
       [[ "$nome_settings" == settings.local.json && -n "$ANT_ALVO_SETTINGS_LOCAL" ]] && ANTERIOR="$ANT_ALVO_SETTINGS_LOCAL"
-      if SAIDA="$(python3 - "$ATUAL" "$ANTERIOR" <<'PY'
+      if SAIDA="$(python3 - "$ATUAL" "$ANTERIOR" "$REPOR" <<'PY'
 import json, os, re, sys, tempfile
 MARCADOR = "<<removido-pelo-backup>>"
-atual, anterior = os.path.realpath(sys.argv[1]), sys.argv[2]
+atual, anterior, repor_ok = os.path.realpath(sys.argv[1]), sys.argv[2], sys.argv[3] == "1"
 with open(atual, encoding="utf-8") as f:
     d = json.load(f)
 antigo = {}
@@ -497,14 +515,13 @@ repostas, faltam_env, faltam_marc = 0, [], []
 # 1. env
 env = d.get("env") if isinstance(d, dict) else None
 env_ant = antigo.get("env") if isinstance(antigo, dict) else None
-if isinstance(env, dict):
+if repor_ok and isinstance(env, dict):
     for k in [k for k, v in env.items() if v == ""]:
-        v = env_ant.get(k) if isinstance(env_ant, dict) else None
-        if isinstance(v, str) and v != "":
-            env[k] = v; repostas += 1
+        if isinstance(env_ant, dict) and k in env_ant:
+            if env_ant[k] != "":
+                env[k] = env_ant[k]; repostas += 1; mudou = True   # qualquer valor: texto, número, booleano
         else:
-            del env[k]; faltam_env.append(k)
-        mudou = True
+            del env[k]; faltam_env.append(k); mudou = True
 # 2. marcador: só repõe se a .anterior tiver UM texto igual fora do marcador
 textos_ant = []
 def coletar(o):
@@ -514,7 +531,8 @@ def coletar(o):
         for v in o: coletar(v)
     elif isinstance(o, str) and MARCADOR not in o:
         textos_ant.append(o)
-coletar(antigo)
+if repor_ok:
+    coletar(antigo)
 def repor(o, cam):
     global mudou, repostas
     if isinstance(o, dict):
@@ -529,22 +547,32 @@ def repor(o, cam):
             return achados.pop()
         faltam_marc.append(cam)
     return o
-d = repor(d, "")
-if mudou:
-    modo = os.stat(atual).st_mode & 0o777
+if repor_ok:
+    d = repor(d, "")
+# Permissão: nunca mais aberta que a do arquivo de antes; sem arquivo de antes, só o dono (600)
+modo = os.stat(atual).st_mode & 0o777
+modo &= (os.stat(anterior).st_mode & 0o777) if os.path.isfile(anterior) else 0o600
+bytes_antes = None
+if os.path.isfile(anterior) and d == antigo:
+    with open(anterior, "rb") as a:
+        bytes_antes = a.read()
+    with open(atual, "rb") as a:
+        if a.read() == bytes_antes:
+            bytes_antes = None      # já está idêntico
+if mudou or bytes_antes is not None:
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(atual), prefix=".settings.", suffix=".tmp")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        if d == antigo:
-            # ficou igual ao de antes: grava o arquivo de antes, com a formatação original
-            with open(anterior, encoding="utf-8") as a:
-                f.write(a.read())
+    os.chmod(tmp, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        if bytes_antes is not None:
+            f.write(bytes_antes)    # ficou igual ao de antes: o arquivo de antes, com a formatação original
         else:
-            json.dump(d, f, indent=2, ensure_ascii=False)
-            f.write("\n")
+            f.write((json.dumps(d, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
     with open(tmp, encoding="utf-8") as f:
         json.load(f)
     os.chmod(tmp, modo)
     os.replace(tmp, atual)
+else:
+    os.chmod(atual, modo)
 print("REPOSTAS=" + str(repostas))
 print("FALTAM_ENV=" + ",".join(faltam_env))
 print("FALTAM_MARC=" + ",".join(faltam_marc))
@@ -569,7 +597,6 @@ PY
         warn "Não consegui ajustar o ~/.claude/$nome_settings — confira o bloco env à mão."
       fi
     done
-  fi
 fi
 
 trap - INT TERM
