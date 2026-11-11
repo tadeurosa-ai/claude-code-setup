@@ -57,7 +57,7 @@ if [[ -z "$_SELF" || "$_SELF" == "/dev/stdin" || "$_SELF" == "bash" ]]; then
 fi
 
 # ── Banner ────────────────────────────────────────────────────────────────────
-clear
+clear 2>/dev/null || true   # TERM=dumb e afins: limpar a tela não é essencial
 echo -e "${BOLD}"
 cat << 'BANNER'
   ██████╗██╗      █████╗ ██╗   ██╗██████╗ ███████╗

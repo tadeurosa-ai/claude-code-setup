@@ -28,7 +28,7 @@ ISSUES=0
 BACKUPS_VALID=()
 BACKUPS_CORRUPT=()
 
-clear
+clear 2>/dev/null || true   # TERM=dumb e afins: limpar a tela não é essencial
 echo -e "${BOLD}"
 cat << 'BANNER'
   ██████╗██╗      █████╗ ██╗   ██╗██████╗ ███████╗
