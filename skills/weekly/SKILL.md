@@ -1,3 +1,9 @@
+---
+name: weekly
+description: "Visão consolidada da semana para planejamento e retrospectiva."
+metadata:
+  origem: claude-code-setup
+---
 # /weekly — Resumo Semanal
 
 Visão consolidada da semana para planejamento e retrospectiva.

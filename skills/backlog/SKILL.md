@@ -1,3 +1,9 @@
+---
+name: backlog
+description: "Captura ideias e tarefas sem sair do fluxo."
+metadata:
+  origem: claude-code-setup
+---
 # /backlog — Salvar no Backlog
 
 Captura ideias e tarefas sem sair do fluxo.

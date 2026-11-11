@@ -1,4 +1,10 @@
-# /debug — Protocolo de Debugging Estruturado
+---
+name: depurar
+description: "Para de tentar na tentativa e erro. Debugging sistemático que resolve mais rápido."
+metadata:
+  origem: claude-code-setup
+---
+# /depurar — Protocolo de Debugging Estruturado
 
 Para de tentar na tentativa e erro. Debugging sistemático que resolve mais rápido.
 
@@ -14,13 +20,13 @@ Guia você (e o Claude) por um protocolo estruturado:
 ## Uso
 
 ```
-/debug
-/debug [descrição breve do problema]
+/depurar
+/depurar [descrição breve do problema]
 ```
 
 Exemplo:
 ```
-/debug usuário não consegue fazer login após mudar senha
+/depurar usuário não consegue fazer login após mudar senha
 ```
 
 ## Protocolo

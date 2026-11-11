@@ -141,19 +141,31 @@ shopt -s nullglob
 skill_dirs=("$HOME/.claude/skills"/*/)
 shopt -u nullglob
 
+# Arquivo da skill na pasta, com o nome como está gravado (SKILL.md, ou skill.md antigo)
+arquivo_skill() {
+  local f
+  for f in "$1"/*; do
+    [[ -f "$f" ]] || continue
+    case "$(basename "$f" | tr '[:upper:]' '[:lower:]')" in
+      skill.md) printf '%s' "$f"; return 0 ;;
+    esac
+  done
+  return 1
+}
+
 if [[ ${#skill_dirs[@]} -eq 0 ]]; then
   warn "Nenhuma skill instalada"
 else
   for skill_dir in "${skill_dirs[@]}"; do
     skill_name="$(basename "$skill_dir")"
-    skill_md="$skill_dir/skill.md"
-    if [[ -f "$skill_md" ]] && [[ -s "$skill_md" ]]; then
+    skill_md="$(arquivo_skill "${skill_dir%/}")" || skill_md=""
+    if [[ -n "$skill_md" ]] && [[ -s "$skill_md" ]]; then
       ok "Skill '$skill_name' — ok ($(wc -l < "$skill_md") linhas)"
-    elif [[ -f "$skill_md" ]] && [[ ! -s "$skill_md" ]]; then
-      bad "Skill '$skill_name' — skill.md VAZIO (corrompido)"
+    elif [[ -n "$skill_md" ]]; then
+      bad "Skill '$skill_name' — $(basename "$skill_md") VAZIO (corrompido)"
       ISSUES=$(( ISSUES + 1 ))
     else
-      warn "Skill '$skill_name' — sem skill.md"
+      warn "Skill '$skill_name' — sem SKILL.md"
     fi
   done
 fi

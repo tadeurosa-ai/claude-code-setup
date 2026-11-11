@@ -236,6 +236,59 @@ echo "skills" > "$CHECKPOINT_FILE"
 
 SKILLS_INSTALLED=0
 
+# Arquivo da skill na pasta, com o nome como está gravado (SKILL.md, ou skill.md antigo)
+arquivo_skill() {
+  local f
+  for f in "$1"/*; do
+    [[ -f "$f" ]] || continue
+    case "$(basename "$f" | tr '[:upper:]' '[:lower:]')" in
+      skill.md) printf '%s' "$f"; return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# Skill instalada por este pacote: marca no frontmatter, ou o rodapé das versões antigas
+do_pacote() {
+  grep -q '^  origem: claude-code-setup$' "$1" 2>/dev/null \
+    || grep -q 'Claude Code Setup PRO — by Tadeu Rosa' "$1" 2>/dev/null
+}
+
+# skill.md do pacote (ou vazio) vira SKILL.md, em dois passos: o Mac não diferencia
+# maiúscula de minúscula. Arquivo do usuário não é mexido.
+para_SKILL() {
+  local f
+  f="$(arquivo_skill "$1")" || return 0
+  [[ "$(basename "$f")" == "SKILL.md" ]] && return 0
+  if do_pacote "$f" || [[ ! -s "$f" ]]; then
+    mv "$f" "$1/.SKILL.md.renomeando" && mv "$1/.SKILL.md.renomeando" "$1/SKILL.md"
+  fi
+}
+
+# /review, /debug e /context das versões antigas tomavam o lugar dos comandos nativos.
+# As do pacote saem de ~/.claude/skills (guardadas, nunca apagadas); as do usuário ficam.
+SKILLS_ANTIGAS=""
+for velho in review debug context; do
+  d="$HOME/.claude/skills/$velho"
+  [[ -d "$d" && ! -L "$d" ]] || continue
+  f="$(arquivo_skill "$d")" || continue
+  if do_pacote "$f"; then
+    if [[ -z "$SKILLS_ANTIGAS" ]]; then
+      base_antigas="$HOME/.claude/skills-antigas-setup-$(date +%Y%m%d-%H%M%S)"
+      SKILLS_ANTIGAS="$base_antigas"; n=2
+      while [[ -e "$SKILLS_ANTIGAS" || -L "$SKILLS_ANTIGAS" ]]; do SKILLS_ANTIGAS="$base_antigas-$n"; n=$((n+1)); done
+      mkdir -p "$SKILLS_ANTIGAS"
+    fi
+    mv "$d" "$SKILLS_ANTIGAS/$velho"
+    warn "Old skill /$velho moved to ~/.claude/$(basename "$SKILLS_ANTIGAS")/$velho — the built-in /$velho works again."
+  else
+    warn "Skill '$velho' is yours (not from this package) — kept. Note: it replaces the built-in /$velho command."
+  fi
+done
+if [[ -n "$SKILLS_ANTIGAS" ]]; then
+  info "New names: /revisar-codigo (was /review), /depurar (was /debug), /contexto-projeto (was /context)."
+fi
+
 if [[ -d "$SCRIPT_DIR/skills" ]]; then
   for skill_dir in "$SCRIPT_DIR/skills"/*/; do
     [[ -d "$skill_dir" ]] || continue
@@ -243,9 +296,11 @@ if [[ -d "$SCRIPT_DIR/skills" ]]; then
     dest="$HOME/.claude/skills/$skill_name"
     mkdir -p "$dest"
 
-    existing="$dest/skill.md"
-    if [[ -f "$existing" ]] && [[ -s "$existing" ]]; then
+    para_SKILL "$dest"
+    existing="$(arquivo_skill "$dest")" || existing=""
+    if [[ -n "$existing" ]] && [[ -s "$existing" ]]; then
       mkdir -p "$dest/.example"
+      para_SKILL "$dest/.example"
       cp -r "${skill_dir}." "$dest/.example/"
       warn "Skill '$skill_name' already exists — reference saved to .example/"
     else
@@ -417,7 +472,7 @@ ${BACKUP_MSG}
 ${NOTIF_TIP}
 ${BOLD}Next steps:${RESET}
   1. Open Claude Code:    ${BLUE}claude${RESET}
-  2. Test:                ${BLUE}/daily${RESET}  ${BLUE}/review${RESET}  ${BLUE}/standup${RESET}
+  2. Test:                ${BLUE}/daily${RESET}  ${BLUE}/revisar-codigo${RESET}  ${BLUE}/standup${RESET}
   3. If something breaks: ${BLUE}bash repair.sh${RESET}
 
 ${BOLD}by Tadeu Rosa — CC BY-NC-ND 4.0${RESET}

@@ -1,3 +1,9 @@
+---
+name: pr
+description: "Gera uma descrição completa e profissional para o seu PR."
+metadata:
+  origem: claude-code-setup
+---
 # /pr — Descrição de Pull Request
 
 Gera uma descrição completa e profissional para o seu PR.

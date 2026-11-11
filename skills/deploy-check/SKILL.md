@@ -1,3 +1,9 @@
+---
+name: deploy-check
+description: "Garante que nada crítico ficou para trás antes de subir para produção."
+metadata:
+  origem: claude-code-setup
+---
 # /deploy-check — Checklist Pré-Deploy
 
 Garante que nada crítico ficou para trás antes de subir para produção.
