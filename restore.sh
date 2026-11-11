@@ -211,7 +211,9 @@ fi
 section "Restaurando"
 
 TMP_EXTRACT="$(mktemp -d)"
-trap 'rm -rf "$TMP_EXTRACT"' EXIT
+TMP_PROPRIO="$(mktemp -d)"   # registros do próprio restore (nunca dentro do que veio do snapshot)
+trap 'rm -rf "$TMP_EXTRACT" "$TMP_PROPRIO"' EXIT
+COLOCADOS="$TMP_PROPRIO/colocados"; : > "$COLOCADOS"   # atalhos cujo destino ESTE restore preencheu
 
 # Extrai ANTES de mexer em qualquer pasta: snapshot com defeito para aqui.
 info "Extraindo snapshot..."
@@ -234,7 +236,7 @@ EXISTIA_SETTINGS_LOCAL=false; [[ -e "$HOME/.claude/settings.local.json" ]] && EX
 RESTORE_TS="$(date +%Y%m%d-%H%M%S)"
 ANT_PONTO_CLAUDE=""
 # Pastas com permissão registrada que já existiam antes (no modo mesclar não são tocadas)
-MODOS_EXISTIAM="$TMP_EXTRACT/.modos-existiam"; : > "$MODOS_EXISTIAM"
+MODOS_EXISTIAM="$TMP_PROPRIO/modos-existiam"; : > "$MODOS_EXISTIAM"
 if [[ -f "$INFO" ]]; then
   while IFS= read -r linha; do
     rel="${linha%%|*}"
@@ -306,6 +308,22 @@ caminho_ok() {
   esac
 }
 
+# Nenhum pedaço do caminho é atalho — a não ser atalho cujo destino este restore preencheu
+# (o registro é do próprio restore, nunca do snapshot)
+sem_atalho_alheio() {  # sem_atalho_alheio <rel> <base> [arquivo-de-colocados]
+  local resto="$1" pre="" parte
+  while [[ -n "$resto" ]]; do
+    parte="${resto%%/*}"
+    if [[ "$resto" == */* ]]; then resto="${resto#*/}"; else resto=""; fi
+    pre="${pre:+$pre/}$parte"
+    if [[ -L "$2/$pre" ]]; then
+      [[ -n "${3:-}" ]] && grep -qxF -- "$pre" "$3" && continue
+      return 1
+    fi
+  done
+  return 0
+}
+
 # Destino de atalho vindo do snapshot: relativo à pasta pessoal, sem ".." e sem "/" no início
 destino_ok() {
   case "$1" in
@@ -340,7 +358,7 @@ trazer_de_volta() {
 trazer_por_regras() {
   local raiz="$1" ant="$2" dest="$3" registro tipo cam rel base item r lista
   TRAZIDOS=0
-  lista="$TMP_EXTRACT/.trazer-$raiz"
+  lista="$TMP_PROPRIO/trazer-$raiz"
   : > "$lista"
   while IFS= read -r -d '' registro; do
     tipo="${registro%%$'\t'*}"; cam="${registro#*$'\t'}"
@@ -437,6 +455,20 @@ restore_dir() {
   fi
 }
 
+# Permissões registradas: a pasta já nasce fechada (grupo/outros) — aplicadas na extração,
+# antes de copiar; o dono continua podendo gravar até o fim (o modo completo vem no final)
+if [[ -f "$INFO" ]] && grep -q '^modo=' "$INFO"; then
+  while IFS= read -r linha; do
+    rel="${linha%%|*}"; m="${linha#*|}"
+    [[ "$rel" == .claude || "$rel" == claude ]] || caminho_ok "$rel" || continue
+    [[ "$m" =~ ^[0-7]{3,4}$ && -d "$TMP_EXTRACT/$rel" ]] || continue
+    sem_atalho_alheio "$rel" "$TMP_EXTRACT" || continue
+    cur="$(modo_atual "$TMP_EXTRACT/$rel" 2>/dev/null)" || continue
+    [[ "$cur" =~ ^[0-7]{3,4}$ ]] || continue
+    chmod "$(printf '%o' $(( (8#$cur & 8#700) | (8#$m & 8#$cur & 8#077) )))" "$TMP_EXTRACT/$rel" 2>/dev/null || true
+  done < <(sed -n 's/^modo=//p' "$INFO")
+fi
+
 restore_dir ".claude"
 restore_dir "claude"
 
@@ -462,6 +494,7 @@ if [[ -f "$INFO" ]] && grep -q '^atalho=' "$INFO"; then
       if $fora_das_pastas && [[ -e "$alvo" || -L "$alvo" ]]; then
         echo ""
         warn "O backup quer pôr o conteúdo de ~/$item em ~/$alvo_rel, que já existe e fica fora de ~/.claude e ~/claude."
+        warn "Se responder não, ~/$item volta como cópia comum (sem atalho): o que você editar depois não chega a ~/$alvo_rel."
         RESP=""
         read -rp "  Substituir ~/$alvo_rel? (o que está lá fica guardado numa pasta .anterior) [s/N]: " RESP || RESP=""
         if [[ ! "$(echo "$RESP" | tr '[:upper:]' '[:lower:]')" =~ ^(s|sim|y|yes)$ ]]; then
@@ -479,6 +512,7 @@ if [[ -f "$INFO" ]] && grep -q '^atalho=' "$INFO"; then
         desfazer
         error "Falha ao recriar o atalho ~/$item. Suas pastas originais voltaram para o lugar."
       }
+      printf '%s\n' "$item" >> "$COLOCADOS"
       case "$nome_item" in
         settings.json)       ANT_ALVO_SETTINGS="$ant_alvo" ;;
         settings.local.json) ANT_ALVO_SETTINGS_LOCAL="$ant_alvo" ;;
@@ -635,7 +669,8 @@ if [[ -f "$INFO" ]] && grep -q '^modo=' "$INFO"; then
   while IFS= read -r linha; do
     rel="${linha%%|*}"; m="${linha#*|}"
     [[ "$rel" == .claude || "$rel" == claude ]] || caminho_ok "$rel" || continue
-    [[ "$m" =~ ^[0-7]{3,4}$ && -d "$HOME/$rel" && ! -L "$HOME/$rel" ]] || continue
+    [[ "$m" =~ ^[0-7]{3,4}$ && -d "$HOME/$rel" ]] || continue
+    sem_atalho_alheio "$rel" "$HOME" "$COLOCADOS" || continue
     [[ "$RESTORE_MODE" == "merge" ]] && grep -qxF -- "$rel" "$MODOS_EXISTIAM" && continue
     cur="$(modo_atual "$HOME/$rel" 2>/dev/null)" || continue
     [[ "$cur" =~ ^[0-7]{3,4}$ ]] || continue

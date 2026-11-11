@@ -440,9 +440,10 @@ def tem_corpo(j, fim):
     t = t.replace(b"\\r\\n", b"\n").replace(b"\\n", b"\n").replace(b"\\r", b"\n").replace(b"\r", b"\n")
     for linha in t.split(b"\n")[:30]:
         l = linha.strip(b" \t\"'`|>,;+\\")
-        if not l or RE_LINHA_CAB.match(l):
+        pedacos = l.split()
+        if not pedacos or RE_LINHA_CAB.match(l):
             continue                      # linha em branco ou de cabeçalho: o corpo vem depois
-        return bool(RE_CORPO.match(l.split()[0]))
+        return bool(RE_CORPO.match(pedacos[0]))
     return False
 
 def chave_no(j, primeira):
@@ -459,6 +460,8 @@ def chave_no(j, primeira):
     return False
 
 COPIAS_SETTINGS = ("settings*.json.*", ".settings*.json*")    # em qualquer pasta (ex.: .anterior do restore)
+RE_ANTERIOR = re.compile(r"\.anterior-[0-9]{8}-[0-9]{6}(?:-[0-9]+)?$")   # todo arquivo guardado pelo restore
+COPIA_REAIS = set()          # (pasta, "nome-real.") do settings que é atalho: cópias ao lado dele
 COPIAS_CONFIG = (".mcp.json", "*.mcp.json*", "claude-json.backup*")  # só no 1º nível do ~/.claude
 
 class NaoLeu(Exception):
@@ -541,6 +544,11 @@ def motivo_fora(p, nome, topo_claude):
             if not inofensivo(p, nm):
                 return "chave"
         if any(fnmatch.fnmatchcase(nome, g) for g in COPIAS_SETTINGS):
+            return "cópia de configuração"
+        if RE_ANTERIOR.search(nome):
+            return "cópia guardada pelo restore (.anterior)"
+        if COPIA_REAIS and any(
+                os.path.dirname(os.path.realpath(p)) == d and nome.startswith(pref) for d, pref in COPIA_REAIS):
             return "cópia de configuração"
         if topo_claude and not NUVEM and any(fnmatch.fnmatchcase(nome, g) for g in COPIAS_CONFIG):
             return "cópia de configuração"
@@ -788,6 +796,8 @@ if os.path.isdir(base):
             p = os.path.join(base, nm)
             if os.path.islink(p) and os.path.isfile(os.path.realpath(p)):
                 EXCLUIR_REAIS.add(os.path.realpath(p))
+                rp = os.path.realpath(p)
+                COPIA_REAIS.add((os.path.dirname(rp), os.path.basename(rp) + "."))
     for nome in sorted(os.listdir(base)):
         p, r = os.path.join(base, nome), ".claude/" + nome
         # Atalho no primeiro nível (ex.: skills -> ~/claude/skills)
