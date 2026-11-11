@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
 # Claude Code Backup — by Tadeu Rosa
-# Versão: 1.0.0
+# Versão: 1.1.0
 # Licença: CC BY-NC-ND 4.0 — uso pessoal permitido, redistribuição proibida
 # ─────────────────────────────────────────────────────────────────────────────
 # O QUE ESTE SCRIPT FAZ:
 #   Faz backup APENAS dos arquivos do Claude Code (~/.claude/ e ~/claude/).
 #   Documentos, fotos, vídeos e demais arquivos NÃO são incluídos.
+#
+#   Destino na NUVEM (iCloud, Google Drive, OneDrive, Dropbox):
+#     • de ~/.claude/ só vão as configurações (lista fixa abaixo);
+#     • login, histórico e textos das conversas, .env e chaves ficam na máquina;
+#     • o settings.json vai com os valores do bloco "env" apagados.
+#   Destino LOCAL (pendrive, disco externo, pasta local):
+#     • vai tudo; pergunta se inclui login, senhas (.env) e chaves.
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -60,10 +67,12 @@ cat << 'SCOPE'
 ║  ✗  Aplicativos instalados        → NÃO incluídos           ║
 ║  ✗  Demais arquivos do usuário    → NÃO incluídos           ║
 ║                                                              ║
+║  Na nuvem, login, histórico, .env e chaves NÃO vão.          ║
+║                                                              ║
 ║  Para backup completo da máquina use:                        ║
 ║    • Mac:     Time Machine                                   ║
 ║    • Windows: Backup e Restauração (Painel de Controle)     ║
-║    • Nuvem:   iCloud / Google Drive / OneDrive              ║
+║    • Nuvem:   iCloud / Google Drive / OneDrive / Dropbox    ║
 ╚══════════════════════════════════════════════════════════════╝
 SCOPE
 echo -e "${RESET}"
@@ -123,45 +132,6 @@ if [[ $CLEANED -gt 0 ]]; then
 else
   ok "Nada para limpar"
 fi
-
-# ── Limpeza opcional de histórico ─────────────────────────────────────────────
-EXCLUDE_CHATS=false
-
-if [[ -d "$HOME/claude/chats" ]]; then
-  CHATS_SIZE="$(du -sh "$HOME/claude/chats" 2>/dev/null | cut -f1 || echo '?')"
-  echo ""
-  echo -e "${BOLD}Histórico de chats encontrado (${CHATS_SIZE}).${RESET}"
-  echo -e "  Incluir no backup? (pode aumentar o tamanho e o tempo de sync)"
-  echo -e "  [s] Sim, incluir chats  ${YELLOW}(padrão)${RESET}"
-  echo -e "  [n] Não incluir chats agora"
-  echo ""
-  read -rp "  Escolha [S/n]: " CHATS_CONFIRM
-  case "$(echo "$CHATS_CONFIRM" | tr '[:upper:]' '[:lower:]')" in
-    n|nao|não|no) EXCLUDE_CHATS=true; info "Chats excluídos do backup" ;;
-    *) info "Chats incluídos no backup" ;;
-  esac
-fi
-
-# ── Calcula tamanho estimado ───────────────────────────────────────────────────
-section "Estimativa"
-
-SIZE_CLAUDE=0; SIZE_WORKSPACE=0
-
-[[ -d "$HOME/.claude" ]] && \
-  SIZE_CLAUDE="$(du -sm "$HOME/.claude" 2>/dev/null | cut -f1 || echo 0)"
-
-if [[ -d "$HOME/claude" ]]; then
-  if $EXCLUDE_CHATS && [[ -d "$HOME/claude/chats" ]]; then
-    _TOTAL="$(du -sm "$HOME/claude" 2>/dev/null | cut -f1 || echo 0)"
-    _CHATS="$(du -sm "$HOME/claude/chats" 2>/dev/null | cut -f1 || echo 0)"
-    SIZE_WORKSPACE=$(( _TOTAL - _CHATS ))
-  else
-    SIZE_WORKSPACE="$(du -sm "$HOME/claude" 2>/dev/null | cut -f1 || echo 0)"
-  fi
-fi
-
-TOTAL_SIZE=$(( SIZE_CLAUDE + SIZE_WORKSPACE ))
-ok "Tamanho estimado: ~${TOTAL_SIZE} MB"
 
 # ── Escolha do destino ────────────────────────────────────────────────────────
 section "Destino do backup"
@@ -229,7 +199,7 @@ DEST_TYPE=""
 case "$DEST_TYPE" in
   custom)
     echo ""
-    read -rp "  Caminho de destino (ex: /Volumes/USB ou ~/Desktop): " DEST_PATH
+    read -rp "  Caminho de destino (ex: /Volumes/USB): " DEST_PATH
     DEST_PATH="${DEST_PATH/#\~/$HOME}"
     [[ -d "$DEST_PATH" ]] || error "Pasta não encontrada: $DEST_PATH"
     ;;
@@ -245,34 +215,225 @@ esac
 
 ok "Destino: $DEST_PATH"
 
+# ── O destino é nuvem? ────────────────────────────────────────────────────────
+# Caminho real, sem atalhos (symlinks)
+caminho_real() { ( cd "$1" 2>/dev/null && pwd -P ) || echo "$1"; }
+
+# Mac: Mesa e Documentos sincronizados com o iCloud
+icloud_mesa_docs() {
+  $IS_MAC || return 1
+  [[ "$(defaults read com.apple.finder FXICloudDriveDesktop 2>/dev/null || true)" == "1" ]] && return 0
+  [[ "$(defaults read com.apple.finder FXICloudDriveDocuments 2>/dev/null || true)" == "1" ]] && return 0
+  [[ -d "$HOME/Library/Mobile Documents/com~apple~CloudDocs/Desktop" ]] && return 0
+  [[ -d "$HOME/Library/Mobile Documents/com~apple~CloudDocs/Documents" ]] && return 0
+  return 1
+}
+
+eh_nuvem() {
+  local p home_real d
+  p="$(caminho_real "$1")"
+  home_real="$(caminho_real "$HOME")"
+  for base in "$HOME" "$home_real"; do
+    case "$p" in
+      "$base/Library/Mobile Documents"|"$base/Library/Mobile Documents/"*) return 0 ;;
+      "$base/Library/CloudStorage"|"$base/Library/CloudStorage/"*) return 0 ;;
+    esac
+  done
+  case "$p" in
+    *iCloudDrive*|*"iCloud Drive"*|*OneDrive*|*"Google Drive"*|*GoogleDrive*|*Dropbox*) return 0 ;;
+  esac
+  if icloud_mesa_docs; then
+    for d in "$HOME/Desktop" "$HOME/Documents"; do
+      [[ -d "$d" ]] || continue
+      d="$(caminho_real "$d")"
+      case "$p" in "$d"|"$d/"*) return 0 ;; esac
+    done
+  fi
+  return 1
+}
+
+DEST_IS_CLOUD=false
+if [[ "$DEST_TYPE" == "icloud" || "$DEST_TYPE" == "gdrive" ]] || eh_nuvem "$DEST_PATH"; then
+  DEST_IS_CLOUD=true
+fi
+
+# ── O que entra ───────────────────────────────────────────────────────────────
+EXCLUDE_CHATS=false
+INCLUDE_SECRETS=false
+
+if $DEST_IS_CLOUD; then
+  warn "Destino na nuvem. Vão só as configurações do Claude Code e os seus projetos."
+  warn "Ficam na máquina: login, histórico e textos das conversas, senhas (.env) e chaves."
+  EXCLUDE_CHATS=true
+else
+  ok "Destino local (pendrive, disco ou pasta que não sincroniza)."
+
+  if [[ -d "$HOME/claude/chats" ]]; then
+    CHATS_SIZE="$(du -sh "$HOME/claude/chats" 2>/dev/null | cut -f1 || echo '?')"
+    echo ""
+    echo -e "${BOLD}Histórico de chats encontrado (${CHATS_SIZE}).${RESET}"
+    echo -e "  Incluir no backup? (pode aumentar o tamanho e o tempo de sync)"
+    echo -e "  [s] Sim, incluir chats  ${YELLOW}(padrão)${RESET}"
+    echo -e "  [n] Não incluir chats agora"
+    echo ""
+    read -rp "  Escolha [S/n]: " CHATS_CONFIRM
+    case "$(echo "$CHATS_CONFIRM" | tr '[:upper:]' '[:lower:]')" in
+      n|nao|não|no) EXCLUDE_CHATS=true; info "Chats excluídos do backup" ;;
+      *) info "Chats incluídos no backup" ;;
+    esac
+  fi
+
+  echo ""
+  echo -e "${BOLD}Login do Claude Code, senhas de projetos (.env) e chaves (.pem, .key).${RESET}"
+  echo -e "  Inclua só se o destino for um pendrive ou disco que só você usa."
+  echo ""
+  read -rp "  Incluir login, senhas (.env) e chaves? [s/N]: " SECRETS_CONFIRM
+  case "$(echo "$SECRETS_CONFIRM" | tr '[:upper:]' '[:lower:]')" in
+    s|sim|y|yes) INCLUDE_SECRETS=true; warn "Login, senhas e chaves INCLUÍDOS — guarde o arquivo em local seguro" ;;
+    *) info "Login, senhas e chaves ficam fora" ;;
+  esac
+fi
+
+# ── Calcula tamanho estimado ───────────────────────────────────────────────────
+section "Estimativa"
+
+if $DEST_IS_CLOUD; then
+  ok "Na nuvem vai só uma parte das pastas; o tamanho final aparece no fim."
+else
+  SIZE_CLAUDE=0; SIZE_WORKSPACE=0
+
+  [[ -d "$HOME/.claude" ]] && \
+    SIZE_CLAUDE="$(du -sm "$HOME/.claude" 2>/dev/null | cut -f1 || echo 0)"
+
+  if [[ -d "$HOME/claude" ]]; then
+    if $EXCLUDE_CHATS && [[ -d "$HOME/claude/chats" ]]; then
+      _TOTAL="$(du -sm "$HOME/claude" 2>/dev/null | cut -f1 || echo 0)"
+      _CHATS="$(du -sm "$HOME/claude/chats" 2>/dev/null | cut -f1 || echo 0)"
+      SIZE_WORKSPACE=$(( _TOTAL - _CHATS ))
+    else
+      SIZE_WORKSPACE="$(du -sm "$HOME/claude" 2>/dev/null | cut -f1 || echo 0)"
+    fi
+  fi
+
+  TOTAL_SIZE=$(( SIZE_CLAUDE + SIZE_WORKSPACE ))
+  ok "Tamanho estimado: ~${TOTAL_SIZE} MB"
+fi
+
 # ── Criação do snapshot ───────────────────────────────────────────────────────
 section "Criando snapshot"
+
+[[ -d "$HOME/.claude" || -d "$HOME/claude" ]] || \
+  error "Nenhuma pasta do Claude Code encontrada em $HOME"
 
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 SNAPSHOT_NAME="claude-code-snapshot-${TIMESTAMP}.tar.gz"
 SNAPSHOT_PATH="$DEST_PATH/$SNAPSHOT_NAME"
 
-# Monta lista de exclusões
-EXCLUDES=()
-# Paths relativos a -C $HOME — tar ignora path absoluto com -C
-$EXCLUDE_CHATS && EXCLUDES+=("--exclude=claude/chats")
-EXCLUDES+=(
-  "--exclude=.claude-backup-*.tar.gz"
-  "--exclude=.claude-snapshot-*.tar.gz"
-  "--exclude=.claude-install-checkpoint"
-)
+# Pasta de trabalho: uma "raiz" com atalhos para as pastas reais. O tar lê
+# tudo dela, então o settings.json limpo e o arquivo de informação entram no
+# mesmo snapshot sem copiar as pastas grandes.
+TMP_WORK="$(mktemp -d)"
+trap 'rm -rf "$TMP_WORK"' EXIT
+RAIZ="$TMP_WORK/raiz"
+LISTA="$TMP_WORK/lista"
+TAR_LOG="$TMP_WORK/tar.log"
+mkdir -p "$RAIZ"
+: > "$LISTA"
+
+# Arquivos que nunca entram (o próprio snapshot, se o destino estiver dentro das pastas)
+FILTRO=( ! -name 'claude-code-snapshot-*.tar.gz' )
+# Login, senhas e chaves
+if $DEST_IS_CLOUD || ! $INCLUDE_SECRETS; then
+  FILTRO+=( ! -name '.credentials.json'
+            ! -name '.env'
+            ! \( -name '.env.*' ! -name '.env.example' \)
+            ! -name '*.pem'
+            ! -name '*.key' )
+fi
+# Pastas que não entram
+PODA=( -path './__nenhuma__' )
+$DEST_IS_CLOUD && PODA+=( -o -path '.claude/skills/.trash' )
+$EXCLUDE_CHATS && PODA+=( -o -path 'claude/chats' )
+
+# listar <caminho relativo ao HOME> → acrescenta os arquivos à lista
+listar() {
+  ( cd "$HOME" && find -H "$1" \( "${PODA[@]}" \) -prune -o \
+      \( -type f -o -type l \) "${FILTRO[@]}" -print0 2>/dev/null ) >> "$LISTA" || true
+}
+na_lista() { printf '%s\0' "$1" >> "$LISTA"; }
+
+SETTINGS_STATUS=""
+
+if $DEST_IS_CLOUD; then
+  # ~/.claude por LISTA DO QUE ENTRA: só configurações
+  # (code.claude.com/docs/en/claude-directory, tabela "File reference")
+  if [[ -d "$HOME/.claude" ]]; then
+    mkdir -p "$RAIZ/.claude"
+    for item in skills hooks commands agents rules output-styles workflows agent-memory memory; do
+      if [[ -d "$HOME/.claude/$item" ]]; then
+        ln -s "$HOME/.claude/$item" "$RAIZ/.claude/$item"
+        listar ".claude/$item"
+      fi
+    done
+    for item in CLAUDE.md keybindings.json; do
+      if [[ -f "$HOME/.claude/$item" ]]; then
+        cp "$HOME/.claude/$item" "$RAIZ/.claude/$item"
+        na_lista ".claude/$item"
+      fi
+    done
+    # Memória automática de cada projeto
+    for m in "$HOME"/.claude/projects/*/memory; do
+      [[ -d "$m" ]] || continue
+      rel="${m#"$HOME"/}"
+      mkdir -p "$RAIZ/$(dirname "$rel")"
+      ln -s "$m" "$RAIZ/$rel"
+      listar "$rel"
+    done
+    # settings.json sem os valores do bloco "env"
+    if [[ -f "$HOME/.claude/settings.json" ]]; then
+      if command -v python3 &>/dev/null && python3 - "$HOME/.claude/settings.json" "$RAIZ/.claude/settings.json" <<'PY' 2>/dev/null
+import json, sys
+src, dst = sys.argv[1], sys.argv[2]
+with open(src, encoding="utf-8") as f:
+    d = json.load(f)
+env = d.get("env")
+if isinstance(env, dict):
+    d["env"] = {k: "" for k in env}
+with open(dst, "w", encoding="utf-8") as f:
+    json.dump(d, f, indent=2, ensure_ascii=False)
+    f.write("\n")
+PY
+      then
+        na_lista ".claude/settings.json"
+        SETTINGS_STATUS="limpo"
+        ok "settings.json incluído sem os valores do bloco env"
+      else
+        rm -f "$RAIZ/.claude/settings.json"
+        SETTINGS_STATUS="fora"
+        warn "settings.json ficou fora (precisa do python3 para tirar as chaves do bloco env)"
+      fi
+    fi
+  fi
+  # ~/claude por EXCLUSÃO: sem .env, chaves e chats
+  if [[ -d "$HOME/claude" ]]; then
+    ln -s "$HOME/claude" "$RAIZ/claude"
+    listar "claude"
+  fi
+else
+  [[ -d "$HOME/.claude" ]] && { ln -s "$HOME/.claude" "$RAIZ/.claude"; listar ".claude"; }
+  [[ -d "$HOME/claude"  ]] && { ln -s "$HOME/claude"  "$RAIZ/claude";  listar "claude"; }
+fi
+
+# Informação usada pelo restore.sh (não é restaurada para as pastas)
+if $DEST_IS_CLOUD; then DEST_LABEL="nuvem"; else DEST_LABEL="local"; fi
+if $INCLUDE_SECRETS; then SECRETS_LABEL="sim"; else SECRETS_LABEL="nao"; fi
+printf 'destino=%s\nsegredos=%s\ndata=%s\n' "$DEST_LABEL" "$SECRETS_LABEL" "$TIMESTAMP" \
+  > "$RAIZ/claude-code-backup-info.txt"
+na_lista "claude-code-backup-info.txt"
 
 info "Comprimindo arquivos..."
 
-SOURCES=()
-[[ -d "$HOME/.claude"  ]] && SOURCES+=(".claude")
-[[ -d "$HOME/claude"   ]] && SOURCES+=("claude")
-
-if [[ ${#SOURCES[@]} -eq 0 ]]; then
-  error "Nenhuma pasta do Claude Code encontrada em $HOME"
-fi
-
-if tar -czf "$SNAPSHOT_PATH" "${EXCLUDES[@]}" -C "$HOME" "${SOURCES[@]}" 2>/dev/null; then
+if tar -czf "$SNAPSHOT_PATH" -C "$RAIZ" --null -T "$LISTA" 2>"$TAR_LOG"; then
   # Verifica integridade imediatamente
   if tar -tzf "$SNAPSHOT_PATH" &>/dev/null; then
     FINAL_SIZE="$(du -sh "$SNAPSHOT_PATH" 2>/dev/null | cut -f1 || echo '?')"
@@ -282,11 +443,18 @@ if tar -czf "$SNAPSHOT_PATH" "${EXCLUDES[@]}" -C "$HOME" "${SOURCES[@]}" 2>/dev/
     error "Snapshot criado mas corrompido — verifique espaço em disco em: $DEST_PATH"
   fi
 else
+  rm -f "$SNAPSHOT_PATH"
+  tail -5 "$TAR_LOG" >&2 || true
   error "Falha ao criar snapshot — verifique permissões e espaço em: $DEST_PATH"
 fi
 
 # ── Aviso final para destinos em nuvem ───────────────────────────────────────
-if [[ "$DEST_TYPE" == "icloud" || "$DEST_TYPE" == "gdrive" ]]; then
+if $DEST_IS_CLOUD; then
+  echo ""
+  echo -e "${BOLD}Na nuvem, da pasta de configuração do Claude Code só foram as configurações. Ficaram na sua máquina: login, histórico e textos das conversas, senhas de projetos (.env) e chaves. Pra levar tudo, use pendrive ou pasta local.${RESET}"
+  [[ "$SETTINGS_STATUS" == "limpo" ]] && \
+    info "O settings.json foi sem os valores do bloco env; o restore.sh lista o que precisar ser preenchido."
+
   echo ""
   echo -e "${BOLD}${YELLOW}"
   cat << SYNC_WARN
@@ -294,7 +462,7 @@ if [[ "$DEST_TYPE" == "icloud" || "$DEST_TYPE" == "gdrive" ]]; then
 ║  ⚠  AGUARDE O SYNC ANTES DE FORMATAR A MÁQUINA              ║
 ╠══════════════════════════════════════════════════════════════╣
 ║                                                              ║
-║  O arquivo foi salvo na pasta local do iCloud/Google Drive.  ║
+║  O arquivo foi salvo numa pasta que sincroniza com a nuvem.  ║
 ║  O upload para a nuvem acontece em segundo plano.            ║
 ║                                                              ║
 ║  NÃO formate a máquina até confirmar o upload:               ║
@@ -303,9 +471,11 @@ SYNC_WARN
   if [[ "$DEST_TYPE" == "icloud" ]]; then
     echo -e "║    • Mac: ícone iCloud na barra de menu pare de girar        ║"
     echo -e "║    • Ou: icloud.com → confirme o arquivo lá                  ║"
-  else
+  elif [[ "$DEST_TYPE" == "gdrive" ]]; then
     echo -e "║    • Ícone Google Drive na barra de menu pare de girar       ║"
     echo -e "║    • Ou: drive.google.com → confirme o arquivo lá            ║"
+  else
+    echo -e "║    • Confira no site ou no app da nuvem que o arquivo subiu  ║"
   fi
 
   cat << SYNC_WARN2
@@ -325,7 +495,7 @@ ${BOLD}Arquivo:${RESET}  $SNAPSHOT_PATH
 ${BOLD}Tamanho:${RESET}  ${FINAL_SIZE}
 
 ${BOLD}Próximos passos:${RESET}
-  1. $(if [[ "$DEST_TYPE" == "icloud" || "$DEST_TYPE" == "gdrive" ]]; then echo "Confirme o upload na nuvem antes de prosseguir"; else echo "Guarde o arquivo em local seguro"; fi)
+  1. $(if $DEST_IS_CLOUD; then echo "Confirme o upload na nuvem antes de prosseguir"; else echo "Guarde o arquivo em local seguro"; fi)
   2. Formate a máquina
   3. Instale o Claude Code: ${BLUE}https://claude.ai/code${RESET}
   4. Restaure com: ${BLUE}bash restore.sh${RESET}
