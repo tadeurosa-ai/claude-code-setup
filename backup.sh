@@ -459,13 +459,15 @@ if $DEST_IS_CLOUD; then
   echo -e "${BOLD}${YELLOW}"
   cat << SYNC_WARN
 ╔══════════════════════════════════════════════════════════════╗
-║  ⚠  AGUARDE O SYNC ANTES DE FORMATAR A MÁQUINA              ║
+║  ⚠  ESTE BACKUP TEM SÓ AS CONFIGURAÇÕES                      ║
 ╠══════════════════════════════════════════════════════════════╣
 ║                                                              ║
-║  O arquivo foi salvo numa pasta que sincroniza com a nuvem.  ║
-║  O upload para a nuvem acontece em segundo plano.            ║
+║  Login, histórico e senhas ficaram fora (de propósito).      ║
+║  NÃO formate a máquina contando só com este backup:          ║
+║  para trocar de máquina, faça também um backup em            ║
+║  pendrive ou pasta local (opção 1 do menu).                  ║
 ║                                                              ║
-║  NÃO formate a máquina até confirmar o upload:               ║
+║  O upload acontece em segundo plano. Confira que subiu:      ║
 SYNC_WARN
 
   if [[ "$DEST_TYPE" == "icloud" ]]; then
@@ -495,10 +497,18 @@ ${BOLD}Arquivo:${RESET}  $SNAPSHOT_PATH
 ${BOLD}Tamanho:${RESET}  ${FINAL_SIZE}
 
 ${BOLD}Próximos passos:${RESET}
-  1. $(if $DEST_IS_CLOUD; then echo "Confirme o upload na nuvem antes de prosseguir"; else echo "Guarde o arquivo em local seguro"; fi)
-  2. Formate a máquina
-  3. Instale o Claude Code: ${BLUE}https://claude.ai/code${RESET}
-  4. Restaure com: ${BLUE}bash restore.sh${RESET}
+$(if $DEST_IS_CLOUD; then
+  echo "  1. Confirme o upload na nuvem"
+  echo "  2. Este backup tem só as configurações. Para trocar de máquina,"
+  echo "     faça também um backup em pendrive ou pasta local"
+  echo "  3. Na máquina nova, instale o Claude Code: ${BLUE}https://claude.ai/code${RESET}"
+  echo "  4. Restaure com: ${BLUE}bash restore.sh${RESET}"
+else
+  echo "  1. Guarde o arquivo em local seguro"
+  echo "  2. Formate a máquina"
+  echo "  3. Instale o Claude Code: ${BLUE}https://claude.ai/code${RESET}"
+  echo "  4. Restaure com: ${BLUE}bash restore.sh${RESET}"
+fi)
 
 ${BOLD}by Tadeu Rosa — CC BY-NC-ND 4.0${RESET}
 "
