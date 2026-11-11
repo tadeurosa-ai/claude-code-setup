@@ -176,14 +176,22 @@ nome_sobrando() {
 }
 
 # Skill instalada por este pacote: marca no frontmatter, ou o rodapé das versões antigas
-# — e o rodapé só conta quando é a ÚLTIMA linha do arquivo (PRO; a Lite, 1º release, só
+# — e o rodapé só conta quando é a última linha COM TEXTO do arquivo (PRO; a Lite, 1º release, só
 # pelo texto exato). Rodapé citado no meio do texto não marca nada.
 do_pacote() {
   local ult
   grep -q '^  origem: claude-code-setup$' "$1" 2>/dev/null && return 0
-  ult="$(tail -n 1 "$1" 2>/dev/null)" || return 1
+  ult="$(awk 'NF { l = $0 } END { print l }' "$1" 2>/dev/null)" || return 1   # última linha COM TEXTO
   case "$ult" in *'Claude Code Setup PRO — by Tadeu Rosa'*) return 0 ;; esac
   [[ "$ult" == '*Claude Code Setup Lite — by Tadeu Rosa · CC BY-NC-ND 4.0*' ]]
+}
+
+# Rodapé do pacote como linha inteira, mas que NÃO é a última linha com texto: parece skill
+# do pacote editada depois do rodapé. O instalador não mexe; só avisa (o repair.sh também).
+rodape_no_meio() {
+  do_pacote "$1" && return 1
+  LC_ALL=C grep -qxF -e '*Claude Code Setup PRO — by Tadeu Rosa · CC BY-NC-ND 4.0*' \
+    -e '*Claude Code Setup Lite — by Tadeu Rosa · CC BY-NC-ND 4.0*' "$1" 2>/dev/null
 }
 
 # Pasta com skill.md e SKILL.md juntos (só em disco que diferencia maiúscula).
@@ -221,6 +229,11 @@ else
       esac
     fi
     skill_md="$(arquivo_skill "${skill_dir%/}")" || skill_md=""
+    _outro="$(nome_sobrando "${skill_dir%/}")" || _outro=""
+    for _f in "$skill_md" ${_outro:+"${skill_dir%/}/$_outro"}; do
+      [[ -n "$_f" ]] && rodape_no_meio "$_f" \
+        && warn "Skill '$skill_name' — parece ser do pacote e foi editada depois do rodapé; não migrei. Para migrar, apague o que está depois do rodapé em ~/.claude/skills/$skill_name/$(basename "$_f") e rode o install.sh de novo"
+    done
     if [[ -n "$skill_md" ]] && [[ -s "$skill_md" ]]; then
       ok "Skill '$skill_name' — ok ($(wc -l < "$skill_md") linhas)"
     elif [[ -n "$skill_md" ]]; then

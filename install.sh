@@ -271,14 +271,22 @@ nome_sobrando() {
 }
 
 # Skill instalada por este pacote: marca no frontmatter, ou o rodapé das versões antigas
-# — e o rodapé só conta quando é a ÚLTIMA linha do arquivo (PRO; a Lite, 1º release, só
+# — e o rodapé só conta quando é a última linha COM TEXTO do arquivo (PRO; a Lite, 1º release, só
 # pelo texto exato). Rodapé citado no meio do texto não marca nada.
 do_pacote() {
   local ult
   grep -q '^  origem: claude-code-setup$' "$1" 2>/dev/null && return 0
-  ult="$(tail -n 1 "$1" 2>/dev/null)" || return 1
+  ult="$(awk 'NF { l = $0 } END { print l }' "$1" 2>/dev/null)" || return 1   # última linha COM TEXTO
   case "$ult" in *'Claude Code Setup PRO — by Tadeu Rosa'*) return 0 ;; esac
   [[ "$ult" == '*Claude Code Setup Lite — by Tadeu Rosa · CC BY-NC-ND 4.0*' ]]
+}
+
+# Rodapé do pacote como linha inteira, mas que NÃO é a última linha com texto: parece skill
+# do pacote editada depois do rodapé. O instalador não mexe; só avisa (o repair.sh também).
+rodape_no_meio() {
+  do_pacote "$1" && return 1
+  LC_ALL=C grep -qxF -e '*Claude Code Setup PRO — by Tadeu Rosa · CC BY-NC-ND 4.0*' \
+    -e '*Claude Code Setup Lite — by Tadeu Rosa · CC BY-NC-ND 4.0*' "$1" 2>/dev/null
 }
 
 # Pasta com skill.md e SKILL.md juntos (só em disco que diferencia maiúscula).
@@ -317,6 +325,11 @@ guardar_antiga() {  # guardar_antiga <caminho> <nome dentro da pasta de antigas>
 #  • skill.md e SKILL.md juntos: ver acao_dois_nomes;
 #  • só skill.md: do pacote (ou vazio) vira SKILL.md em dois passos (o Mac não diferencia
 #    maiúscula); do usuário não é mexido.
+avisar_editada() {  # avisar_editada <pasta> <arquivo>
+  rodape_no_meio "$2" && warn "Skill '$(basename "$1")' looks like it came from this package and was edited after the footer — not migrated. To migrate it, delete what comes after the footer line in ~/${2#$HOME/} and run the installer again."
+  return 0
+}
+
 dois_nomes() {  # dois_nomes <pasta> <pasta do pacote: sim|nao> <outro nome>
   local d="$1" rel="${1#$HOME/}" sub="${1#$HOME/.claude/skills/}"
   case "$(acao_dois_nomes "$d" "$2" "$3")" in
@@ -328,7 +341,8 @@ dois_nomes() {  # dois_nomes <pasta> <pasta do pacote: sim|nao> <outro nome>
         && mv "$d/$3" "$d/.SKILL.md.renomeando" && mv "$d/.SKILL.md.renomeando" "$d/SKILL.md" \
         && warn "Empty ~/$rel/SKILL.md moved to ~/$GUARDADO; ~/$rel/$3 is now SKILL.md." ;;
     *)
-      warn "~/$rel/$3 and ~/$rel/SKILL.md both exist — kept as is. Claude Code reads SKILL.md." ;;
+      warn "~/$rel/$3 and ~/$rel/SKILL.md both exist — kept as is. Claude Code reads SKILL.md."
+      avisar_editada "$d" "$d/$3" ;;
   esac
 }
 
@@ -350,6 +364,8 @@ para_SKILL() {
   [[ "$(basename "$f")" == "SKILL.md" ]] && return 0
   if do_pacote "$f" || [[ ! -s "$f" ]]; then
     mv "$f" "$d/.SKILL.md.renomeando" && mv "$d/.SKILL.md.renomeando" "$d/SKILL.md"
+  else
+    avisar_editada "$d" "$f"
   fi
 }
 
@@ -361,6 +377,8 @@ for velho in review debug context; do
   f="$(arquivo_skill "$d")" || continue
   if do_pacote "$f"; then
     guardar_antiga "$d" "$velho" && warn "Old skill /$velho moved to ~/$GUARDADO"
+  elif rodape_no_meio "$f"; then
+    avisar_editada "$d" "$f"
   elif [[ "$velho" == review ]]; then
     warn "Skill 'review' is yours (not from this package) — kept. Note: it may conflict with Claude Code's own /review."
   else
