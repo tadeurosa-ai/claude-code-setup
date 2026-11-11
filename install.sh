@@ -20,9 +20,16 @@ warn()    { echo -e "${YELLOW}⚠${RESET} $*"; }
 error()   { echo -e "${RED}✗${RESET} $*" >&2; exit 1; }
 section() { echo -e "\n${BOLD}── $* ──────────────────────────────────────────${RESET}"; }
 
+# Caminho real (segue atalhos). Sem python3: o próprio caminho.
+real_path() {
+  python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1" 2>/dev/null || printf '%s\n' "$1"
+}
+
+# Escrita atômica no caminho REAL: se o arquivo é um atalho, o atalho continua atalho
 write_atomic() {
-  local target="$1"; local tmp
-  tmp="$(mktemp "${target}.XXXXXX")"
+  local target tmp
+  target="$(real_path "$1")"
+  tmp="$(mktemp "$(dirname "$target")/.$(basename "$target").XXXXXX")"
   cat > "$tmp"
   mv "$tmp" "$target"
 }
@@ -251,29 +258,6 @@ fi
 
 [[ $SKILLS_INSTALLED -eq 0 ]] && warn "No skills found in package"
 
-# ── Hooks ─────────────────────────────────────────────────────────────────────
-section "Installing hooks"
-
-echo "hooks" > "$CHECKPOINT_FILE"
-
-HOOKS_INSTALLED=0
-
-if [[ -d "$SCRIPT_DIR/hooks" ]]; then
-  for hook_file in "$SCRIPT_DIR/hooks"/*.sh "$SCRIPT_DIR/hooks"/*.py; do
-    [[ -f "$hook_file" ]] || continue
-    hook_name="$(basename "$hook_file")"
-    dest="$HOME/.claude/hooks/$hook_name"
-    cp "$hook_file" "$dest"
-    chmod +x "$dest"
-    ok "Hook: $hook_name"
-    HOOKS_INSTALLED=$(( HOOKS_INSTALLED + 1 ))
-  done
-fi
-
-if [[ -f "$HOME/.claude/hooks/notify-done.sh" ]]; then
-  warn "~/.claude/hooks/notify-done.sh is obsolete (it never ran) — kept, you can delete it."
-fi
-
 # ── Sistema de memória ────────────────────────────────────────────────────────
 section "Memory system"
 
@@ -332,10 +316,16 @@ SETTINGS
   ok "settings.json created"
 fi
 
-# ── Notificação (receita oficial: hook Notification) ──────────────────────────
+# ── Notificação ───────────────────────────────────────────────────────────────
+# Receita oficial (hook Notification), com matcher restrito a pedido de
+# permissão e espera: avisa só quando o Claude Code precisa de você.
 section "Notification"
 
 echo "notification" > "$CHECKPOINT_FILE"
+
+if [[ -f "$HOME/.claude/hooks/notify-done.sh" ]]; then
+  warn "~/.claude/hooks/notify-done.sh is obsolete (it never ran) — kept, you can delete it."
+fi
 
 NOTIF_STATUS="not installed"
 NOTIF_CMD=""
@@ -356,6 +346,7 @@ if [[ -n "$NOTIF_CMD" ]]; then
     _notif_out="$(python3 - "$SETTINGS_FILE" "$NOTIF_CMD" "$(date +%Y%m%d-%H%M%S)" <<'PY'
 import json, os, shutil, sys, tempfile
 path, cmd, stamp = sys.argv[1:4]
+path = os.path.realpath(path)  # settings.json que é atalho continua atalho
 with open(path, encoding="utf-8") as f:
     data = json.load(f)
 if not isinstance(data, dict):
@@ -363,13 +354,13 @@ if not isinstance(data, dict):
 hooks = data.get("hooks", {})
 if not isinstance(hooks, dict) or not isinstance(hooks.get("Notification", []), list):
     print("formato"); sys.exit(0)
-for group in hooks.get("Notification", []):
-    for h in (group.get("hooks") or []) if isinstance(group, dict) else []:
-        c = h.get("command", "") if isinstance(h, dict) else ""
-        if c == cmd:
-            print("igual"); sys.exit(0)
-        if "display notification" in c or "notify-send" in c:
-            print("outra"); sys.exit(0)
+# Qualquer hook Notification que já exista: não acrescenta outro
+existentes = [h for g in hooks.get("Notification", []) if isinstance(g, dict)
+              for h in (g.get("hooks") or []) if isinstance(h, dict)]
+if any(h.get("command") == cmd for h in existentes):
+    print("igual"); sys.exit(0)
+if existentes:
+    print("outra"); sys.exit(0)
 shutil.copy2(path, f"{path}.antes-setup-{stamp}")
 data.setdefault("hooks", {}).setdefault("Notification", []).append(
     {"matcher": "permission_prompt|idle_prompt", "hooks": [{"type": "command", "command": cmd}]})
