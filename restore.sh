@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
 # Claude Code Restore — by Tadeu Rosa
-# Versão: 1.2.0
+# Versão: 1.3.0
 # Licença: CC BY-NC-ND 4.0 — uso pessoal permitido, redistribuição proibida
 # ─────────────────────────────────────────────────────────────────────────────
 # COMO USAR:
@@ -31,8 +31,10 @@ case "$OS" in
   *) error "Sistema não suportado: $OS" ;;
 esac
 
+modo_atual() { if $IS_MAC; then stat -f %Lp "$1"; else stat -c %a "$1"; fi; }
+
 # ── Banner ────────────────────────────────────────────────────────────────────
-clear
+clear 2>/dev/null || true   # TERM=dumb e afins: limpar a tela não é essencial
 echo -e "${BOLD}"
 cat << 'BANNER'
   ██████╗██╗      █████╗ ██╗   ██╗██████╗ ███████╗
@@ -230,6 +232,15 @@ EXISTIA_SETTINGS=false;       [[ -e "$HOME/.claude/settings.json" ]] && EXISTIA_
 EXISTIA_SETTINGS_LOCAL=false; [[ -e "$HOME/.claude/settings.local.json" ]] && EXISTIA_SETTINGS_LOCAL=true
 
 RESTORE_TS="$(date +%Y%m%d-%H%M%S)"
+ANT_PONTO_CLAUDE=""
+# Pastas com permissão registrada que já existiam antes (no modo mesclar não são tocadas)
+MODOS_EXISTIAM="$TMP_EXTRACT/.modos-existiam"; : > "$MODOS_EXISTIAM"
+if [[ -f "$INFO" ]]; then
+  while IFS= read -r linha; do
+    rel="${linha%%|*}"
+    [[ -e "$HOME/$rel" ]] && printf '%s\n' "$rel" >> "$MODOS_EXISTIAM"
+  done < <(sed -n 's/^modo=//p' "$INFO")
+fi
 RESTORED=0
 # Pastas mexidas nesta execução (para desfazer se algo falhar)
 FEITOS_DEST=()
@@ -238,37 +249,53 @@ ANTERIORES_MSG=""
 
 # Devolve tudo ao estado de antes: apaga o que foi copiado e põe a .anterior no lugar
 desfazer() {
-  local i dest ant
+  local i dest ant onde=""
   [[ ${#FEITOS_DEST[@]} -gt 0 ]] || return 0
-  warn "Desfazendo: devolvendo as pastas originais ao lugar..."
+  trap '' INT TERM     # um 2º Ctrl+C não pode interromper a volta
+  warn "Desfazendo, aguarde: devolvendo as pastas originais ao lugar (não feche o terminal)..."
   for (( i=${#FEITOS_DEST[@]}-1; i>=0; i-- )); do
     dest="${FEITOS_DEST[$i]}"; ant="${FEITOS_ANT[$i]}"
     if [[ -n "$ant" ]]; then
       # .anterior não existe: a troca nem chegou a acontecer, e o destino ainda é o original
-      [[ -e "$ant" || -L "$ant" ]] || continue
+      if [[ ! -e "$ant" && ! -L "$ant" ]]; then
+        onde="${onde}\n  • ${dest} — continua no lugar (não chegou a ser trocada)"
+        continue
+      fi
       rm -rf "$dest"
       if mv "$ant" "$dest"; then
         ok "Voltou para o lugar: $dest"
+        onde="${onde}\n  • ${dest} — de volta no lugar"
       else
         warn "Não consegui devolver. Sua pasta original está em: $ant"
+        onde="${onde}\n  • ${dest} — NÃO voltou: a original está em ${ant}"
       fi
     else
       rm -rf "$dest"
+      onde="${onde}\n  • ${dest} — retirada (não existia antes do restore)"
     fi
   done
   FEITOS_DEST=(); FEITOS_ANT=()
+  echo -e "${BOLD}Onde ficou cada pasta:${RESET}${onde}"
 }
 
 # Ctrl+C ou kill durante a troca: desfaz e diz onde está cada coisa
 interrompido() {
-  trap - INT TERM
+  trap '' INT TERM
   echo ""
   warn "Restore interrompido."
   desfazer
-  echo -e "${YELLOW}  Nada foi perdido: as pastas originais voltaram para o lugar (ou o caminho delas aparece acima).${RESET}" >&2
+  echo -e "${YELLOW}  Nada foi perdido: confira acima onde ficou cada pasta.${RESET}" >&2
   exit 130
 }
 trap interrompido INT TERM
+
+# Nome livre para guardar o que está no lugar: o próprio, ou com -2, -3… se já existir
+# (assim, ver a .anterior depois significa que a troca aconteceu de verdade)
+livre() {
+  local c="$1" n=2
+  while [[ -e "$c" || -L "$c" ]]; do c="$1-$n"; n=$((n+1)); done
+  printf '%s' "$c"
+}
 
 # Caminho seguro vindo do snapshot: relativo, dentro de .claude/ ou claude/, sem ".."
 caminho_ok() {
@@ -357,7 +384,8 @@ restore_dir() {
 
   if [[ "$RESTORE_MODE" == "replace" ]]; then
     # 1. Tira a pasta atual do lugar (nunca apaga)
-    [[ -e "$dest" || -L "$dest" ]] && ant="$dest.anterior-$RESTORE_TS"
+    [[ -e "$dest" || -L "$dest" ]] && ant="$(livre "$dest.anterior-$RESTORE_TS")"
+    [[ "$src_name" == .claude ]] && ANT_PONTO_CLAUDE="$ant"
     FEITOS_DEST+=("$dest"); FEITOS_ANT+=("$ant")   # registrado antes da troca (Ctrl+C no meio)
     if [[ -n "$ant" ]] && ! mv "$dest" "$ant"; then
       desfazer
@@ -418,7 +446,7 @@ restore_dir "claude"
 ANT_ALVO_SETTINGS=""; ANT_ALVO_SETTINGS_LOCAL=""
 if [[ -f "$INFO" ]] && grep -q '^atalho=' "$INFO"; then
   section "Atalhos"
-  while IFS= read -r linha; do
+  while IFS= read -r linha <&4; do
     item="${linha%%|*}"; alvo_rel="${linha#*|}"
     nome_item="${item#.claude/}"
     if [[ "$item" == "$linha" || "$nome_item" == "$item" || "$nome_item" == */* || -z "$nome_item" ]] \
@@ -428,9 +456,21 @@ if [[ -f "$INFO" ]] && grep -q '^atalho=' "$INFO"; then
     fi
     link="$HOME/$item"; alvo="$HOME/$alvo_rel"
     if [[ -e "$TMP_EXTRACT/$item" && ! -L "$TMP_EXTRACT/$item" && "$RESTORE_MODE" == "replace" && -e "$link" && ! -L "$link" ]]; then
-      # O conteúdo veio no snapshot: vai para o destino do atalho, e o atalho é recriado
+      # O conteúdo veio no snapshot: vai para o destino do atalho, e o atalho é recriado.
+      # Destino que já existe fora de ~/.claude e ~/claude só é substituído com "s".
+      case "$alvo_rel" in .claude|.claude/*|claude|claude/*) fora_das_pastas=false ;; *) fora_das_pastas=true ;; esac
+      if $fora_das_pastas && [[ -e "$alvo" || -L "$alvo" ]]; then
+        echo ""
+        warn "O backup quer pôr o conteúdo de ~/$item em ~/$alvo_rel, que já existe e fica fora de ~/.claude e ~/claude."
+        RESP=""
+        read -rp "  Substituir ~/$alvo_rel? (o que está lá fica guardado numa pasta .anterior) [s/N]: " RESP || RESP=""
+        if [[ ! "$(echo "$RESP" | tr '[:upper:]' '[:lower:]')" =~ ^(s|sim|y|yes)$ ]]; then
+          warn "~/$alvo_rel não foi tocado. O conteúdo do backup ficou em ~/$item (cópia comum, sem atalho)."
+          continue
+        fi
+      fi
       ant_alvo=""
-      [[ -e "$alvo" || -L "$alvo" ]] && ant_alvo="$alvo.anterior-$RESTORE_TS"
+      [[ -e "$alvo" || -L "$alvo" ]] && ant_alvo="$(livre "$alvo.anterior-$RESTORE_TS")"
       FEITOS_DEST+=("$alvo"); FEITOS_ANT+=("$ant_alvo")   # registrado antes da troca (Ctrl+C no meio)
       if [[ -n "$ant_alvo" ]]; then
         mv "$alvo" "$ant_alvo" || { desfazer; error "Não consegui guardar $alvo. Suas pastas originais voltaram para o lugar."; }
@@ -454,7 +494,7 @@ if [[ -f "$INFO" ]] && grep -q '^atalho=' "$INFO"; then
       ok "~/$item → ~/$alvo_rel (atalho recriado)"
       [[ -e "$alvo" ]] || warn "O destino ~/$alvo_rel não existe nesta máquina: o atalho fica quebrado até ele existir."
     fi
-  done < <(sed -n 's/^atalho=//p' "$INFO")
+  done 4< <(sed -n 's/^atalho=//p' "$INFO")
 fi
 
 # Atalhos que apontavam para fora da pasta pessoal (ex.: outro disco): o backup levou
@@ -466,17 +506,6 @@ if [[ -f "$INFO" ]] && grep -q '^atalho_fora=' "$INFO"; then
     warn "~/$item era atalho para fora da pasta pessoal: voltou como pasta comum (cópia). Se quiser o atalho de volta, recrie-o."
   done < <(sed -n 's/^atalho_fora=//p' "$INFO")
 fi
-
-# Permissões das pastas que o backup registrou (ex.: ~/.claude só para o dono)
-if [[ "$RESTORE_MODE" == "replace" && -f "$INFO" ]] && grep -q '^modo=' "$INFO"; then
-  while IFS= read -r linha; do
-    rel="${linha%%|*}"; m="${linha#*|}"
-    [[ "$rel" == .claude || "$rel" == claude ]] || caminho_ok "$rel" || continue
-    [[ "$m" =~ ^[0-7]{3,4}$ ]] || continue
-    [[ -d "$HOME/$rel" ]] && chmod "$m" "$HOME/$rel" 2>/dev/null
-  done < <(sed -n 's/^modo=//p' "$INFO")
-fi
-
 
 # ── settings sem segredos: valores do bloco "env" e tokens com marcador ──────
 # Backup para a nuvem ou local sem senhas: o settings vem com o "env" vazio e
@@ -494,7 +523,7 @@ else
       [[ "$RESTORE_MODE" == "replace" ]] || ! $existia || continue   # não veio do snapshot: não mexe
       if [[ $REPOR == 1 ]] && ! $SECAO_SETTINGS; then section "Chaves do settings"; SECAO_SETTINGS=true; fi
       # settings que era atalho: a versão anterior é a que estava no destino do atalho
-      ANTERIOR="$HOME/.claude.anterior-$RESTORE_TS/$nome_settings"
+      ANTERIOR=""; [[ -n "$ANT_PONTO_CLAUDE" ]] && ANTERIOR="$ANT_PONTO_CLAUDE/$nome_settings"
       [[ "$nome_settings" == settings.json && -n "$ANT_ALVO_SETTINGS" ]] && ANTERIOR="$ANT_ALVO_SETTINGS"
       [[ "$nome_settings" == settings.local.json && -n "$ANT_ALVO_SETTINGS_LOCAL" ]] && ANTERIOR="$ANT_ALVO_SETTINGS_LOCAL"
       if SAIDA="$(python3 - "$ATUAL" "$ANTERIOR" "$REPOR" <<'PY'
@@ -597,6 +626,21 @@ PY
         warn "Não consegui ajustar o ~/.claude/$nome_settings — confira o bloco env à mão."
       fi
     done
+fi
+
+# Permissões das pastas que o backup registrou (ex.: ~/.claude só para o dono).
+# Por último (depois de repor as chaves) e só fechando: nunca abre mais do que está.
+# Modo mesclar: só nas pastas que este restore criou.
+if [[ -f "$INFO" ]] && grep -q '^modo=' "$INFO"; then
+  while IFS= read -r linha; do
+    rel="${linha%%|*}"; m="${linha#*|}"
+    [[ "$rel" == .claude || "$rel" == claude ]] || caminho_ok "$rel" || continue
+    [[ "$m" =~ ^[0-7]{3,4}$ && -d "$HOME/$rel" && ! -L "$HOME/$rel" ]] || continue
+    [[ "$RESTORE_MODE" == "merge" ]] && grep -qxF -- "$rel" "$MODOS_EXISTIAM" && continue
+    cur="$(modo_atual "$HOME/$rel" 2>/dev/null)" || continue
+    [[ "$cur" =~ ^[0-7]{3,4}$ ]] || continue
+    chmod "$(printf '%o' $(( 8#$m & 8#$cur & 8#777 )))" "$HOME/$rel" 2>/dev/null || true
+  done < <(sed -n 's/^modo=//p' "$INFO")
 fi
 
 trap - INT TERM

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
 # Claude Code Backup — by Tadeu Rosa
-# Versão: 1.2.0
+# Versão: 1.3.0
 # Licença: CC BY-NC-ND 4.0 — uso pessoal permitido, redistribuição proibida
 # ─────────────────────────────────────────────────────────────────────────────
 # O QUE ESTE SCRIPT FAZ:
@@ -41,7 +41,7 @@ case "$OS" in
 esac
 
 # ── Banner ────────────────────────────────────────────────────────────────────
-clear
+clear 2>/dev/null || true   # TERM=dumb e afins: limpar a tela não é essencial
 echo -e "${BOLD}"
 cat << 'BANNER'
   ██████╗██╗      █████╗ ██╗   ██╗██████╗ ███████╗
@@ -352,7 +352,7 @@ SEM_CHATS=0; $EXCLUDE_CHATS && SEM_CHATS=1
 
 info "Separando o que entra..."
 if ! python3 - "$HOME" "$RAIZ" "$TMP_WORK" "$NUVEM" "$SEG_FORA" "$SEM_CHATS" "$SNAPSHOT_PATH" <<'PY'
-import fnmatch, json, os, re, shutil, stat, sys
+import codecs, fnmatch, json, os, re, shutil, stat, sys
 
 HOME, RAIZ, WORK = sys.argv[1:4]
 NUVEM, SEG_FORA, SEM_CHATS = (a == "1" for a in sys.argv[4:7])
@@ -363,7 +363,8 @@ SOBRA = 64 * 1024           # …que se sobrepõem 64 KiB (token cortado na emen
 lista = open(os.path.join(WORK, "lista"), "wb")
 regras = open(os.path.join(WORK, "regras"), "wb")
 fatal, fora_topo, fora_nomes, atalhos_info, atalhos_fora, refs_fora = [], [], [], [], [], []
-atalhos_copia, modos, settings_msgs = [], [], []
+atalhos_copia, modos, settings_msgs, avisos = [], [], [], []
+modos_feitos = set()         # pastas cuja permissão já foi registrada
 sumidos = [0]
 adicionados = set()          # caminhos relativos que entraram na lista
 raizes_reais = []            # pastas reais que entraram (para saber se um atalho aponta para dentro)
@@ -376,6 +377,15 @@ def add(rel):
 
 def regra(tipo, rel):
     regras.write(os.fsencode(tipo + "\t" + rel) + b"\0")
+
+def guardar_pais(rel):
+    """Pastas entre ~/.claude e o arquivo (ex.: .claude/bin): a permissão delas não vai no tar."""
+    partes = rel.split("/")
+    for i in range(2, len(partes)):
+        anc = "/".join(partes[:i])
+        if anc not in modos_feitos:
+            modos_feitos.add(anc)
+            guardar_modo(anc, os.path.join(HOME, anc))
 
 def guardar_modo(rel, p):
     try:
@@ -416,41 +426,93 @@ def trechos_token(s):
 # ── Chaves (D8) ──
 CHAVE_EXT = (".pem", ".key", ".p12", ".pfx", ".jks", ".keystore")
 CHAVE_PREF = ("id_rsa", "id_ed25519", "id_ecdsa", "id_dsa")
-# D8 (revista em 11/11): cabeçalho no começo da linha, logo depois de aspas ou de um
-# "\n" escrito no texto (chave guardada dentro de JSON, ex.: conta de serviço).
-# Um texto que cite o cabeçalho entre aspas também sai (erro para o lado seguro).
-RE_PRIVADA = re.compile(rb'(?m)(?:^|"|\\n)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----')
-COPIAS_CONFIG = ("settings*.json.*", ".settings*.json*", ".mcp.json", "*.mcp.json*", "claude-json.backup*")
+# D8 (revista 2x em 11/11). Fica fora o arquivo com o cabeçalho de chave privada:
+#   • no começo de uma linha, logo depois de aspas duplas ou de um "\n" escrito; ou
+#   • em qualquer lugar, quando vem SEGUIDO DO CORPO da chave (aceita antes do corpo
+#     linhas de cabeçalho como "Version:", "Proc-Type:", "DEK-Info:" e linha em branco).
+# Frase que só cita o cabeçalho, sem corpo, continua indo. UTF-16 é decodificado antes.
+RE_CAB = re.compile(rb"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----")
+RE_LINHA_CAB = re.compile(rb"[A-Za-z][A-Za-z0-9-]*:[ \t]")
+RE_CORPO = re.compile(rb"[A-Za-z0-9+/=]{40,}")
+
+def tem_corpo(j, fim):
+    t = j[fim:fim + 4096]
+    t = t.replace(b"\\r\\n", b"\n").replace(b"\\n", b"\n").replace(b"\\r", b"\n").replace(b"\r", b"\n")
+    for linha in t.split(b"\n")[:30]:
+        l = linha.strip(b" \t\"'`|>,;+\\")
+        if not l or RE_LINHA_CAB.match(l):
+            continue                      # linha em branco ou de cabeçalho: o corpo vem depois
+        return bool(RE_CORPO.match(l.split()[0]))
+    return False
+
+def chave_no(j, primeira):
+    for m in RE_CAB.finditer(j):
+        s0 = m.start()
+        if s0 == 0 and not primeira:
+            continue                      # já conferido na janela anterior, com o que vinha antes
+        antes = j[max(0, s0 - 2):s0]
+        if (s0 == 0 or antes[-1:] in (b"\n", b"\r", b'"') or antes == b"\\n"
+                or (primeira and j[:s0] == b"\xef\xbb\xbf")):
+            return True
+        if tem_corpo(j, m.end()):
+            return True
+    return False
+
+COPIAS_SETTINGS = ("settings*.json.*", ".settings*.json*")    # em qualquer pasta (ex.: .anterior do restore)
+COPIAS_CONFIG = (".mcp.json", "*.mcp.json*", "claude-json.backup*")  # só no 1º nível do ~/.claude
 
 class NaoLeu(Exception):
     pass
 
+def utf16(b):
+    if b[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return "utf-16"
+    n = len(b) // 2
+    if n < 16:
+        return None
+    par, impar = b[0:2 * n:2].count(0), b[1:2 * n:2].count(0)
+    if impar > 0.4 * n and par < 0.05 * n:
+        return "utf-16-le"
+    if par > 0.4 * n and impar < 0.05 * n:
+        return "utf-16-be"
+    return None
+
 def janelas(p):
-    """Conteúdo do arquivo em pedaços sobrepostos, sem limite de tamanho.
-    Binário (byte zero nos primeiros 8 KiB): nada. Erro de leitura no meio: NaoLeu (falha fechada)."""
+    """(primeira, pedaço) do conteúdo, em pedaços sobrepostos, sem limite de tamanho.
+    UTF-16: decodificado. Binário (byte zero nos primeiros 8 KiB): nada.
+    Erro de leitura no meio: NaoLeu (falha fechada)."""
     with open(p, "rb") as f:
         resto = b""
         primeiro = True
+        dec = None
         while True:
             try:
-                bloco = f.read(PEDACO)
+                bruto = f.read(PEDACO)
             except OSError as e:
                 raise NaoLeu(e.strerror)
             if primeiro:
-                primeiro = False
-                if b"\0" in bloco[:8192]:
+                cod = utf16(bruto[:8192])
+                if cod:
+                    dec = codecs.getincrementaldecoder(cod)("replace")
+                elif b"\0" in bruto[:8192]:
                     return
-            if not bloco:
+            if not bruto:
                 return
-            yield resto + bloco
+            bloco = dec.decode(bruto).encode("utf-8") if dec else bruto
+            yield primeiro, resto + bloco
+            primeiro = False
             resto = (resto + bloco)[-SOBRA:]
 
 def segredo_no_conteudo(p):
-    for j in janelas(p):
-        if RE_PRIVADA.search(j):
+    for primeira, j in janelas(p):
+        if chave_no(j, primeira):
             return "chave privada no conteúdo"
-        if NUVEM and trechos_token(j.decode("utf-8", "replace")):
-            return "token no conteúdo"
+        if NUVEM:
+            sp = trechos_token(j.decode("utf-8", "replace"))
+            if not primeira:
+                sp = [x for x in sp if x[0] > 0]   # começo da janela no meio de uma palavra: já visto antes
+            if sp:
+                return "token no conteúdo"
     return None
 
 def inofensivo(p, nome_min):
@@ -459,7 +521,7 @@ def inofensivo(p, nome_min):
             return f.read(4) == b"PK\x03\x04"          # Keynote (zip)
     if nome_min.endswith(".pem"):
         cert = False
-        for j in janelas(p):
+        for _, j in janelas(p):
             if b"PRIVATE KEY" in j:
                 return False
             cert = cert or b"-----BEGIN CERTIFICATE-----" in j
@@ -478,6 +540,8 @@ def motivo_fora(p, nome, topo_claude):
         if nm.endswith(CHAVE_EXT) or nome.startswith(CHAVE_PREF):
             if not inofensivo(p, nm):
                 return "chave"
+        if any(fnmatch.fnmatchcase(nome, g) for g in COPIAS_SETTINGS):
+            return "cópia de configuração"
         if topo_claude and not NUVEM and any(fnmatch.fnmatchcase(nome, g) for g in COPIAS_CONFIG):
             return "cópia de configuração"
     if NUVEM and nome in ("token.json", "credentials.json", "secrets.toml"):
@@ -535,6 +599,7 @@ def arquivo(rel, p, nome, topo_claude=False, destino=None):
         fora_nomes.append(f"{m}: {rel}")
         return
     if destino:
+        guardar_pais(rel)
         os.makedirs(os.path.dirname(destino), exist_ok=True)
         shutil.copy2(p, destino)
     arquivos_reais.add(os.path.realpath(p))
@@ -653,6 +718,23 @@ PASTAS_NUVEM = {"skills", "hooks", "commands", "agents", "rules", "output-styles
 ARQUIVOS_NUVEM = {"CLAUDE.md", "keybindings.json", "settings.json"}
 EXT_SCRIPT = (".sh", ".bash", ".zsh", ".fish", ".py", ".js", ".mjs", ".cjs", ".ts", ".rb", ".pl")
 
+RE_TEE = re.compile(r"(?:^|[|;&(\s])tee(?:\s[^|;&<>()\n]*)?$")
+RE_TALVEZ = re.compile(r"(?:^|[|;&(\s])(?:cp|mv|rsync|install|touch|truncate|ln|dd|sed\s+-i\S*|perl\s+-\S*i\S*)(?:\s[^|;&<>()\n]*)?$")
+
+def gravado(antes):
+    """O caminho que vem logo depois deste texto é ALVO de gravação? (motivo, ou None)
+    Conta: depois de > ou >> (com ou sem aspas) e argumento de tee. Na dúvida (comando
+    que pode gravar: cp, mv, touch, sed -i…, dd of=), também conta."""
+    a = antes.rstrip()
+    sem_aspas = a.rstrip("\"'").rstrip()
+    if sem_aspas.endswith(">") or sem_aspas.endswith(">|"):
+        return "o hook grava nele"
+    if RE_TEE.search(a):
+        return "o hook grava nele (tee)"
+    if sem_aspas.endswith("of=") or RE_TALVEZ.search(a):
+        return "o hook talvez grave nele"
+    return None
+
 def citados():
     p = os.path.join(HOME, ".claude", "settings.json")
     try:
@@ -671,7 +753,7 @@ def citados():
                 for h in (g.get("hooks") or []) if isinstance(g, dict) else []:
                     if isinstance(h, dict) and isinstance(h.get("command"), str):
                         textos.append(h["command"])
-    rx = re.compile(r"(?:~|\$HOME|\$\{HOME\}|" + re.escape(HOME) + r")/\.claude/([^\s'\"`;|&<>()]+)")
+    rx = re.compile(r"(?:~|\$HOME|\$\{HOME\}|\"\$HOME\"|\"\$\{HOME\}\"|" + re.escape(HOME) + r")/\.claude/([^\s'\"`;|&<>()]+)")
     aceitos, recusados = set(), {}
     for t in textos:
         for m in rx.finditer(t):
@@ -681,8 +763,9 @@ def citados():
             real = os.path.realpath(os.path.join(HOME, ".claude", r))
             if not os.path.isfile(real):
                 continue
-            if t[:m.start()].rstrip().endswith(">"):
-                recusados[r] = "o hook grava nele"
+            g = gravado(t[:m.start()])
+            if g:
+                recusados[r] = g
             elif not real.lower().endswith(EXT_SCRIPT):
                 recusados.setdefault(r, "não é script")
             else:
@@ -715,6 +798,12 @@ if os.path.isdir(base):
                 add(r)
                 atalhos_fora.append(r + " -> " + os.readlink(p))
                 continue
+            if not (os.path.isdir(alvo) or os.path.isfile(alvo)):
+                regra("arquivo", r)   # nesta máquina, o restore traz o próprio atalho da .anterior
+                fora_nomes.append(f"atalho para arquivo especial (não é arquivo nem pasta), não foi; nesta máquina o restore traz o atalho de volta: {r}")
+                continue
+            if NUVEM and nome == "projects":
+                avisos.append("~/.claude/projects é um atalho: a memória dos projetos NÃO foi para a nuvem. Para levá-la, faça também um backup em pendrive ou pasta local.")
             rel_alvo = os.path.relpath(alvo, REAL_HOME) if dentro(alvo, REAL_HOME) else None
             permitido = (not NUVEM) or nome in PASTAS_NUVEM or nome in ARQUIVOS_NUVEM or nome in refs
             eh_settings = SEG_FORA and nome in ("settings.json", "settings.local.json") and os.path.isfile(alvo)
@@ -829,6 +918,7 @@ gravar("modos", modos)
 gravar("atalhos_fora", atalhos_fora)
 gravar("refs_fora", refs_fora)
 gravar("settings_msgs", settings_msgs)
+gravar("avisos", avisos)
 gravar("sumidos", [str(sumidos[0])])
 PY
 then
@@ -846,7 +936,7 @@ fi
 if $DEST_IS_CLOUD; then DEST_LABEL="nuvem"; else DEST_LABEL="local"; fi
 if $INCLUDE_SECRETS && ! $DEST_IS_CLOUD; then SECRETS_LABEL="sim"; else SECRETS_LABEL="nao"; fi
 {
-  printf 'destino=%s\nsegredos=%s\ndata=%s\nversao=1.2.0\n' "$DEST_LABEL" "$SECRETS_LABEL" "$TIMESTAMP"
+  printf 'destino=%s\nsegredos=%s\ndata=%s\nversao=1.3.0\n' "$DEST_LABEL" "$SECRETS_LABEL" "$TIMESTAMP"
   sed 's/^/atalho=/' "$TMP_WORK/atalhos_info"
   sed 's/^/atalho_fora=/' "$TMP_WORK/atalhos_copia"
   sed 's/^/modo=/' "$TMP_WORK/modos"
@@ -898,6 +988,7 @@ mostrar_lista() {  # mostrar_lista <arquivo> <título>
 }
 
 section "O que ficou de fora"
+while IFS= read -r aviso; do warn "$aviso"; done < "$TMP_WORK/avisos"
 if $DEST_IS_CLOUD; then
   echo -e "${BOLD}Os projetos (~/claude) não vão para a nuvem.${RESET} Para levá-los, use pendrive, pasta local ou o GitHub."
   mostrar_lista "$TMP_WORK/fora_topo" "Itens de ~/.claude que ficaram na máquina"
