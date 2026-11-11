@@ -167,7 +167,8 @@ if ! tar -tzf "$SNAPSHOT" &>/dev/null; then
 fi
 
 SNAP_SIZE="$(du -sh "$SNAPSHOT" 2>/dev/null | cut -f1 || echo '?')"
-SNAP_CONTENTS="$(tar -tzf "$SNAPSHOT" 2>/dev/null | head -5 | sed 's/^/    /')"
+# { … || true }: com pipefail, o head fechando o pipe mata o GNU tar (SIGPIPE, 141) e derrubava o restore
+SNAP_CONTENTS="$({ tar -tzf "$SNAPSHOT" 2>/dev/null || true; } | head -5 | sed 's/^/    /')"
 ok "Snapshot válido (${SNAP_SIZE})"
 echo -e "${BLUE}  Conteúdo (primeiros itens):${RESET}"
 echo "$SNAP_CONTENTS"
