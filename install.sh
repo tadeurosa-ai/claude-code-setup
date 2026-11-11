@@ -236,51 +236,106 @@ echo "skills" > "$CHECKPOINT_FILE"
 
 SKILLS_INSTALLED=0
 
-# Arquivo da skill na pasta, com o nome como está gravado (SKILL.md, ou skill.md antigo)
-arquivo_skill() {
+# Nomes reais (como estão gravados no disco) dos arquivos de skill da pasta: SKILL.md
+# e/ou o skill.md antigo. Em ordem fixa, que não depende do idioma do sistema.
+nomes_skill() {
   local f
   for f in "$1"/*; do
     [[ -f "$f" ]] || continue
-    case "$(basename "$f" | tr '[:upper:]' '[:lower:]')" in
-      skill.md) printf '%s' "$f"; return 0 ;;
+    case "$(basename "$f" | LC_ALL=C tr '[:upper:]' '[:lower:]')" in
+      skill.md) basename "$f" ;;
     esac
-  done
-  return 1
+  done | LC_ALL=C sort
 }
 
-# Skill instalada por este pacote: marca no frontmatter, ou o rodapé das versões antigas
-do_pacote() {
-  grep -q '^  origem: claude-code-setup$' "$1" 2>/dev/null \
-    || grep -q 'Claude Code Setup PRO — by Tadeu Rosa' "$1" 2>/dev/null
-}
-
-# skill.md do pacote (ou vazio) vira SKILL.md, em dois passos: o Mac não diferencia
-# maiúscula de minúscula. Arquivo do usuário não é mexido.
-para_SKILL() {
-  local f
-  f="$(arquivo_skill "$1")" || return 0
-  [[ "$(basename "$f")" == "SKILL.md" ]] && return 0
-  if do_pacote "$f" || [[ ! -s "$f" ]]; then
-    mv "$f" "$1/.SKILL.md.renomeando" && mv "$1/.SKILL.md.renomeando" "$1/SKILL.md"
+# O arquivo que vale: SKILL.md com esse nome exato, se existir; senão o antigo
+arquivo_skill() {
+  local n
+  n="$(nomes_skill "$1")"
+  [[ -n "$n" ]] || return 1
+  if printf '%s\n' "$n" | grep -qx 'SKILL.md'; then
+    printf '%s/SKILL.md' "$1"
+  else
+    printf '%s/%s' "$1" "$(printf '%s\n' "$n" | head -1)"
   fi
 }
 
-# /review, /debug e /context das versões antigas tomavam o lugar dos comandos nativos.
+# O OUTRO nome, quando a pasta tem os dois (só acontece em disco que diferencia maiúscula)
+nome_sobrando() {
+  local n
+  n="$(nomes_skill "$1")"
+  printf '%s\n' "$n" | grep -qx 'SKILL.md' || return 1
+  n="$(printf '%s\n' "$n" | grep -vx 'SKILL.md' | grep -v '^$' | head -1)"
+  [[ -n "$n" ]] || return 1
+  printf '%s' "$n"
+}
+
+# Skill instalada por este pacote: marca no frontmatter, ou o rodapé das versões antigas
+# (PRO; e a Lite, 1º release, só pelo texto exato da linha do rodapé)
+do_pacote() {
+  grep -q '^  origem: claude-code-setup$' "$1" 2>/dev/null \
+    || grep -q 'Claude Code Setup PRO — by Tadeu Rosa' "$1" 2>/dev/null \
+    || LC_ALL=C grep -qxF '*Claude Code Setup Lite — by Tadeu Rosa · CC BY-NC-ND 4.0*' "$1" 2>/dev/null
+}
+
+# Guarda (nunca apaga) o que sai de ~/.claude/skills numa pasta única desta instalação
+SKILLS_ANTIGAS=""; GUARDADO=""
+# (chamar direto, nunca dentro de $( ): a pasta é criada uma vez e vale para a instalação toda)
+guardar_antiga() {  # guardar_antiga <caminho> <nome dentro da pasta de antigas> → GUARDADO
+  local dest n=2
+  if [[ -z "$SKILLS_ANTIGAS" ]]; then
+    local base="$HOME/.claude/skills-antigas-setup-$(date +%Y%m%d-%H%M%S)"
+    SKILLS_ANTIGAS="$base"
+    while [[ -e "$SKILLS_ANTIGAS" || -L "$SKILLS_ANTIGAS" ]]; do SKILLS_ANTIGAS="$base-$n"; n=$((n+1)); done
+    mkdir -p "$SKILLS_ANTIGAS"
+  fi
+  dest="$SKILLS_ANTIGAS/$2"; n=2
+  while [[ -e "$dest" || -L "$dest" ]]; do dest="$SKILLS_ANTIGAS/$2-$n"; n=$((n+1)); done
+  mkdir -p "$(dirname "$dest")"
+  mv "$1" "$dest" && GUARDADO="${dest#$HOME/}"
+}
+
+# Deixa a pasta com um só arquivo de skill, chamado SKILL.md, sem mexer no que é do usuário:
+#  • renomeação interrompida (.SKILL.md.renomeando): termina; se já há SKILL.md, guarda;
+#  • skill.md e SKILL.md juntos: o skill.md do pacote é guardado; o do usuário fica, com aviso;
+#  • só skill.md: do pacote (ou vazio) vira SKILL.md em dois passos (o Mac não diferencia
+#    maiúscula); do usuário não é mexido.
+para_SKILL() {
+  local d="$1" rel="${1#$HOME/}" f outro
+  if [[ -f "$d/.SKILL.md.renomeando" ]]; then
+    if arquivo_skill "$d" >/dev/null; then
+      guardar_antiga "$d/.SKILL.md.renomeando" "${d#$HOME/.claude/skills/}/skill.md.interrompido" \
+        && warn "Interrupted rename in ~/$rel: that copy was kept at ~/$GUARDADO"
+    else
+      mv "$d/.SKILL.md.renomeando" "$d/SKILL.md"
+    fi
+  fi
+  if outro="$(nome_sobrando "$d")"; then
+    if do_pacote "$d/$outro"; then
+      guardar_antiga "$d/$outro" "${d#$HOME/.claude/skills/}/$outro" \
+        && warn "Old ~/$rel/$outro (from this package) moved to ~/$GUARDADO — the folder keeps SKILL.md."
+    else
+      warn "~/$rel/$outro and SKILL.md are both yours — kept. Claude Code reads SKILL.md."
+    fi
+    return 0
+  fi
+  f="$(arquivo_skill "$d")" || return 0
+  [[ "$(basename "$f")" == "SKILL.md" ]] && return 0
+  if do_pacote "$f" || [[ ! -s "$f" ]]; then
+    mv "$f" "$d/.SKILL.md.renomeando" && mv "$d/.SKILL.md.renomeando" "$d/SKILL.md"
+  fi
+}
+
+# /review, /debug e /context das versões antigas tinham nomes de comandos do Claude Code.
 # As do pacote saem de ~/.claude/skills (guardadas, nunca apagadas); as do usuário ficam.
-SKILLS_ANTIGAS=""
 for velho in review debug context; do
   d="$HOME/.claude/skills/$velho"
   [[ -d "$d" && ! -L "$d" ]] || continue
   f="$(arquivo_skill "$d")" || continue
   if do_pacote "$f"; then
-    if [[ -z "$SKILLS_ANTIGAS" ]]; then
-      base_antigas="$HOME/.claude/skills-antigas-setup-$(date +%Y%m%d-%H%M%S)"
-      SKILLS_ANTIGAS="$base_antigas"; n=2
-      while [[ -e "$SKILLS_ANTIGAS" || -L "$SKILLS_ANTIGAS" ]]; do SKILLS_ANTIGAS="$base_antigas-$n"; n=$((n+1)); done
-      mkdir -p "$SKILLS_ANTIGAS"
-    fi
-    mv "$d" "$SKILLS_ANTIGAS/$velho"
-    warn "Old skill /$velho moved to ~/.claude/$(basename "$SKILLS_ANTIGAS")/$velho — the built-in /$velho works again."
+    guardar_antiga "$d" "$velho" && warn "Old skill /$velho moved to ~/$GUARDADO"
+  elif [[ "$velho" == review ]]; then
+    warn "Skill 'review' is yours (not from this package) — kept. Note: it may conflict with Claude Code's own /review."
   else
     warn "Skill '$velho' is yours (not from this package) — kept. Note: it replaces the built-in /$velho command."
   fi

@@ -141,16 +141,46 @@ shopt -s nullglob
 skill_dirs=("$HOME/.claude/skills"/*/)
 shopt -u nullglob
 
-# Arquivo da skill na pasta, com o nome como está gravado (SKILL.md, ou skill.md antigo)
-arquivo_skill() {
+# Nomes reais (como estão gravados no disco) dos arquivos de skill da pasta: SKILL.md
+# e/ou o skill.md antigo. Em ordem fixa, que não depende do idioma do sistema.
+nomes_skill() {
   local f
   for f in "$1"/*; do
     [[ -f "$f" ]] || continue
-    case "$(basename "$f" | tr '[:upper:]' '[:lower:]')" in
-      skill.md) printf '%s' "$f"; return 0 ;;
+    case "$(basename "$f" | LC_ALL=C tr '[:upper:]' '[:lower:]')" in
+      skill.md) basename "$f" ;;
     esac
-  done
-  return 1
+  done | LC_ALL=C sort
+}
+
+# O arquivo que vale: SKILL.md com esse nome exato, se existir; senão o antigo
+arquivo_skill() {
+  local n
+  n="$(nomes_skill "$1")"
+  [[ -n "$n" ]] || return 1
+  if printf '%s\n' "$n" | grep -qx 'SKILL.md'; then
+    printf '%s/SKILL.md' "$1"
+  else
+    printf '%s/%s' "$1" "$(printf '%s\n' "$n" | head -1)"
+  fi
+}
+
+# O OUTRO nome, quando a pasta tem os dois (só acontece em disco que diferencia maiúscula)
+nome_sobrando() {
+  local n
+  n="$(nomes_skill "$1")"
+  printf '%s\n' "$n" | grep -qx 'SKILL.md' || return 1
+  n="$(printf '%s\n' "$n" | grep -vx 'SKILL.md' | grep -v '^$' | head -1)"
+  [[ -n "$n" ]] || return 1
+  printf '%s' "$n"
+}
+
+# Skill instalada por este pacote: marca no frontmatter, ou o rodapé das versões antigas
+# (PRO; e a Lite, 1º release, só pelo texto exato da linha do rodapé)
+do_pacote() {
+  grep -q '^  origem: claude-code-setup$' "$1" 2>/dev/null \
+    || grep -q 'Claude Code Setup PRO — by Tadeu Rosa' "$1" 2>/dev/null \
+    || LC_ALL=C grep -qxF '*Claude Code Setup Lite — by Tadeu Rosa · CC BY-NC-ND 4.0*' "$1" 2>/dev/null
 }
 
 if [[ ${#skill_dirs[@]} -eq 0 ]]; then
@@ -158,6 +188,17 @@ if [[ ${#skill_dirs[@]} -eq 0 ]]; then
 else
   for skill_dir in "${skill_dirs[@]}"; do
     skill_name="$(basename "$skill_dir")"
+    # mesmos casos que o install.sh trata (ele resolve; aqui só o diagnóstico)
+    if [[ -f "${skill_dir%/}/.SKILL.md.renomeando" ]]; then
+      warn "Skill '$skill_name' — renomeação interrompida (.SKILL.md.renomeando): rode o install.sh de novo"
+    fi
+    if outro="$(nome_sobrando "${skill_dir%/}")"; then
+      if do_pacote "${skill_dir%/}/$outro"; then
+        warn "Skill '$skill_name' — sobrou o $outro antigo do pacote (~/.claude/skills/$skill_name/$outro): rode o install.sh de novo para guardá-lo"
+      else
+        warn "Skill '$skill_name' — ~/.claude/skills/$skill_name/$outro e SKILL.md são os dois seus; o Claude Code usa o SKILL.md"
+      fi
+    fi
     skill_md="$(arquivo_skill "${skill_dir%/}")" || skill_md=""
     if [[ -n "$skill_md" ]] && [[ -s "$skill_md" ]]; then
       ok "Skill '$skill_name' — ok ($(wc -l < "$skill_md") linhas)"
