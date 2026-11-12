@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
 # Claude Code Restore — by Tadeu Rosa
-# Versão: 1.3.0
+# Versão: 1.3.1
 # Licença: MIT — veja o arquivo LICENSE
 # ─────────────────────────────────────────────────────────────────────────────
 # COMO USAR:
@@ -223,6 +223,72 @@ LC_ALL=C tar -xzf "$SNAPSHOT" -C "$TMP_EXTRACT" 2>/dev/null || \
   error "Falha ao extrair snapshot. Nada foi alterado nas suas pastas."
 
 # Informação gravada pelo backup.sh
+# ── Atalhos que vieram dentro do snapshot ────────────────────────────────────
+# Garantia: o restore não grava nada fora de ~/.claude e ~/claude sem a pessoa
+# confirmar na tela. Um snapshot adulterado pode trazer um atalho para fora (ex.:
+# settings.json → um arquivo de outra pasta), e o restore gravaria lá. Esses atalhos
+# não são restaurados. A conta é feita só no texto do atalho, sem segui-lo.
+normalizar() {  # normalizar <caminho absoluto>: junta "." e ".." pelo texto
+  local resto="$1" parte saida=""
+  while [[ -n "$resto" ]]; do
+    parte="${resto%%/*}"
+    if [[ "$resto" == */* ]]; then resto="${resto#*/}"; else resto=""; fi
+    case "$parte" in
+      ""|.) ;;
+      ..) saida="${saida%/*}" ;;
+      *)  saida="$saida/$parte" ;;
+    esac
+  done
+  printf '%s' "${saida:-/}"
+}
+# atalho_permitido <pasta onde o atalho vai morar> <texto do atalho> <raízes permitidas...>
+atalho_permitido() {
+  local dir="$1" alvo="$2" resto parte viu_nome=false abs r
+  shift 2
+  [[ -n "$alvo" && "$alvo" != *$'\n'* ]] || return 1
+  # ".." só no começo de um atalho relativo: depois de um nome, ele pode voltar
+  # por dentro de outro atalho e sair das pastas sem aparecer no texto
+  [[ "$alvo" == /* ]] && viu_nome=true
+  resto="$alvo"
+  while [[ -n "$resto" ]]; do
+    parte="${resto%%/*}"
+    if [[ "$resto" == */* ]]; then resto="${resto#*/}"; else resto=""; fi
+    case "$parte" in
+      ""|.) ;;
+      ..) $viu_nome && return 1 ;;
+      *)  viu_nome=true ;;
+    esac
+  done
+  case "$alvo" in
+    /*) abs="$(normalizar "$alvo")" ;;
+    *)  abs="$(normalizar "$dir/$alvo")" ;;
+  esac
+  for r in "$@"; do
+    [[ "$abs" == "$r" || "$abs" == "$r/"* ]] && return 0
+  done
+  return 1
+}
+# limpar_atalhos <pasta com o conteúdo> <onde esse conteúdo vai morar> <raízes permitidas...>
+# Apaga (da cópia de trabalho) cada atalho que sairia das raízes e avisa na tela.
+limpar_atalhos() {
+  local pasta="$1" mora="$2" lk rel alvo dir mostra
+  shift 2
+  mostra="$mora"; [[ "$mora" == "$H_N" || "$mora" == "$H_N/"* ]] && mostra="~${mora#"$H_N"}"
+  while IFS= read -r -d '' lk; do
+    rel="${lk#"$pasta"}"; rel="${rel#/}"
+    alvo="$(readlink "$lk"; printf x)"; alvo="${alvo%x}"; alvo="${alvo%$'\n'}"
+    if [[ "$rel" == */* ]]; then dir="$mora/${rel%/*}"; else dir="$mora"; fi
+    if ! atalho_permitido "$dir" "$alvo" "$@"; then
+      rm -f "$lk"
+      warn "Atalho do backup não restaurado (aponta para fora de ~/.claude e ~/claude): $mostra/$rel → $alvo"
+    fi
+  done < <(find -P "$pasta" -mindepth 1 -type l -print0 2>/dev/null)
+}
+H_N="$(normalizar "$HOME")"
+limpar_atalhos "$TMP_EXTRACT" "$H_N" "$H_N/.claude" "$H_N/claude"
+# Raízes onde o restore pode gravar: as duas pastas e os destinos que a pessoa confirmar
+RAIZES="$TMP_PROPRIO/raizes"; printf '%s\n%s\n' "$HOME/.claude" "$HOME/claude" > "$RAIZES"
+
 INFO="$TMP_EXTRACT/claude-code-backup-info.txt"
 SNAP_DESTINO=""; SNAP_SEGREDOS=""
 if [[ -f "$INFO" ]]; then
@@ -489,20 +555,30 @@ if [[ -f "$INFO" ]] && grep -q '^atalho=' "$INFO"; then
       continue
     fi
     link="$HOME/$item"; alvo="$HOME/$alvo_rel"
+    # Destino fora de ~/.claude e ~/claude: só com "s" da pessoa, exista ele ou não
+    case "$alvo_rel" in .claude|.claude/*|claude|claude/*) fora_das_pastas=false ;; *) fora_das_pastas=true ;; esac
     if [[ -e "$TMP_EXTRACT/$item" && ! -L "$TMP_EXTRACT/$item" && "$RESTORE_MODE" == "replace" && -e "$link" && ! -L "$link" ]]; then
       # O conteúdo veio no snapshot: vai para o destino do atalho, e o atalho é recriado.
-      # Destino que já existe fora de ~/.claude e ~/claude só é substituído com "s".
-      case "$alvo_rel" in .claude|.claude/*|claude|claude/*) fora_das_pastas=false ;; *) fora_das_pastas=true ;; esac
-      if $fora_das_pastas && [[ -e "$alvo" || -L "$alvo" ]]; then
+      if $fora_das_pastas; then
         echo ""
-        warn "O backup quer pôr o conteúdo de ~/$item em ~/$alvo_rel, que já existe e fica fora de ~/.claude e ~/claude."
+        if [[ -e "$alvo" || -L "$alvo" ]]; then
+          warn "O backup quer pôr o conteúdo de ~/$item em ~/$alvo_rel, que já existe e fica fora de ~/.claude e ~/claude."
+          PERGUNTA="  Substituir ~/$alvo_rel? (o que está lá fica guardado numa pasta .anterior) [s/N]: "
+        else
+          warn "O backup quer criar ~/$alvo_rel, fora de ~/.claude e ~/claude, com o conteúdo de ~/$item (era um atalho na máquina do backup)."
+          PERGUNTA="  Criar ~/$alvo_rel? [s/N]: "
+        fi
         warn "Se responder não, ~/$item volta como cópia comum (sem atalho): o que você editar depois não chega a ~/$alvo_rel."
         RESP=""
-        read -rp "  Substituir ~/$alvo_rel? (o que está lá fica guardado numa pasta .anterior) [s/N]: " RESP || RESP=""
+        read -rp "$PERGUNTA" RESP || RESP=""
         if [[ ! "$(echo "$RESP" | tr '[:upper:]' '[:lower:]')" =~ ^(s|sim|y|yes)$ ]]; then
           warn "~/$alvo_rel não foi tocado. O conteúdo do backup ficou em ~/$item (cópia comum, sem atalho)."
           continue
         fi
+        # O conteúdo vai morar fora: atalhos dentro dele só se ficarem nas pastas ou no próprio destino
+        alvo_n="$(normalizar "$alvo")"
+        limpar_atalhos "$link" "$alvo_n" "$H_N/.claude" "$H_N/claude" "$alvo_n"
+        printf '%s\n' "$alvo" >> "$RAIZES"
       fi
       ant_alvo=""
       [[ -e "$alvo" || -L "$alvo" ]] && ant_alvo="$(livre "$alvo.anterior-$RESTORE_TS")"
@@ -526,6 +602,17 @@ if [[ -f "$INFO" ]] && grep -q '^atalho=' "$INFO"; then
       fi
       [[ -n "$ant_alvo" ]] && ANTERIORES_MSG="${ANTERIORES_MSG}\n  • ${ant_alvo}"
     elif [[ ! -e "$link" && ! -L "$link" ]]; then
+      if $fora_das_pastas; then
+        echo ""
+        warn "O backup quer recriar o atalho ~/$item → ~/$alvo_rel, fora de ~/.claude e ~/claude."
+        RESP=""
+        read -rp "  Recriar esse atalho? [s/N]: " RESP || RESP=""
+        if [[ ! "$(echo "$RESP" | tr '[:upper:]' '[:lower:]')" =~ ^(s|sim|y|yes)$ ]]; then
+          warn "Atalho ~/$item não recriado."
+          continue
+        fi
+        printf '%s\n' "$alvo" >> "$RAIZES"
+      fi
       ln -s "$alvo" "$link"
       ok "~/$item → ~/$alvo_rel (atalho recriado)"
       [[ -e "$alvo" ]] || warn "O destino ~/$alvo_rel não existe nesta máquina: o atalho fica quebrado até ele existir."
@@ -562,10 +649,16 @@ else
       ANTERIOR=""; [[ -n "$ANT_PONTO_CLAUDE" ]] && ANTERIOR="$ANT_PONTO_CLAUDE/$nome_settings"
       [[ "$nome_settings" == settings.json && -n "$ANT_ALVO_SETTINGS" ]] && ANTERIOR="$ANT_ALVO_SETTINGS"
       [[ "$nome_settings" == settings.local.json && -n "$ANT_ALVO_SETTINGS_LOCAL" ]] && ANTERIOR="$ANT_ALVO_SETTINGS_LOCAL"
-      if SAIDA="$(python3 - "$ATUAL" "$ANTERIOR" "$REPOR" <<'PY'
+      if SAIDA="$(python3 - "$ATUAL" "$ANTERIOR" "$REPOR" "$RAIZES" <<'PY'
 import json, os, re, sys, tempfile
 MARCADOR = "<<removido-pelo-backup>>"
 atual, anterior, repor_ok = os.path.realpath(sys.argv[1]), sys.argv[2], sys.argv[3] == "1"
+# Só mexe no settings se ele estiver nas pastas ou num destino que a pessoa confirmou
+with open(sys.argv[4], encoding="utf-8", errors="surrogateescape") as f:
+    raizes = [os.path.realpath(r) for r in f.read().split("\n") if r]
+if not any(atual == r or atual.startswith(r.rstrip(os.sep) + os.sep) for r in raizes):
+    print("FORA=1")
+    sys.exit(0)
 with open(atual, encoding="utf-8") as f:
     d = json.load(f)
 antigo = {}
@@ -643,6 +736,10 @@ print("FALTAM_ENV=" + ",".join(faltam_env))
 print("FALTAM_MARC=" + ",".join(faltam_marc))
 PY
 )"; then
+        if printf '%s\n' "$SAIDA" | grep -qx 'FORA=1'; then
+          warn "~/.claude/$nome_settings aponta para fora de ~/.claude e ~/claude: não foi ajustado. Confira o bloco env à mão."
+          continue
+        fi
         N_REPOSTAS="$(printf '%s\n' "$SAIDA" | sed -n 's/^REPOSTAS=//p')"
         FALTAM_ENV="$(printf '%s\n' "$SAIDA" | sed -n 's/^FALTAM_ENV=//p')"
         FALTAM_MARC="$(printf '%s\n' "$SAIDA" | sed -n 's/^FALTAM_MARC=//p')"
