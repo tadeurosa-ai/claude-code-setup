@@ -48,4 +48,4 @@ Analisa o contexto do projeto atual e produz um update estruturado com:
 Use `/standup cliente` antes de enviar para o WhatsApp ou e-mail do cliente — a linguagem é adaptada para não-técnicos.
 
 ---
-*Claude Code Setup PRO — by Tadeu Rosa · CC BY-NC-ND 4.0*
+*Claude Code Setup — by Tadeu Rosa · CC BY 4.0*

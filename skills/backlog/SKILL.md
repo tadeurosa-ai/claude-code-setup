@@ -37,9 +37,9 @@ Salva o item no arquivo `~/claude/projetos/backlog.md` com data, contexto e prio
 - [ ] 🟡 [2026-04-17] adicionar autenticação com Google
 ```
 
-## Dica PRO
+## Dica
 
 Use `/daily` para revisar o backlog e decidir o que entra no dia. O par `/backlog` + `/daily` é a base de um sistema simples de gestão pessoal.
 
 ---
-*Claude Code Setup PRO — by Tadeu Rosa · CC BY-NC-ND 4.0*
+*Claude Code Setup — by Tadeu Rosa · CC BY 4.0*

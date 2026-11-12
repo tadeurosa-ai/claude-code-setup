@@ -2,7 +2,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Claude Code Restore — by Tadeu Rosa
 # Versão: 1.3.0
-# Licença: CC BY-NC-ND 4.0 — uso pessoal permitido, redistribuição proibida
+# Licença: MIT — veja o arquivo LICENSE
 # ─────────────────────────────────────────────────────────────────────────────
 # COMO USAR:
 #   bash restore.sh                          # busca snapshot automaticamente
@@ -733,5 +733,5 @@ ${BOLD}Próximos passos:${RESET}
   2. Teste com: ${BLUE}/help${RESET}
   3. Se algo parecer errado: ${BLUE}bash repair.sh${RESET}
 
-${BOLD}by Tadeu Rosa — CC BY-NC-ND 4.0${RESET}
+${BOLD}by Tadeu Rosa — MIT (scripts) · CC BY 4.0 (skills e textos)${RESET}
 "

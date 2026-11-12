@@ -70,4 +70,4 @@ Exemplo:
 - Não garante que vai resolver — garante que vai encontrar o problema
 
 ---
-*Claude Code Setup PRO — by Tadeu Rosa · CC BY-NC-ND 4.0*
+*Claude Code Setup — by Tadeu Rosa · CC BY 4.0*

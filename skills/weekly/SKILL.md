@@ -54,4 +54,4 @@ Gera um resumo da semana com:
 `/weekly` → visão da semana, para você planejar e aprender
 
 ---
-*Claude Code Setup PRO — by Tadeu Rosa · CC BY-NC-ND 4.0*
+*Claude Code Setup — by Tadeu Rosa · CC BY 4.0*

@@ -43,9 +43,9 @@ Gera um resumo estruturado do dia de trabalho.
 1. ...
 ```
 
-## Dica PRO
+## Dica
 
 Use `/daily fim` antes de fechar o computador — o Claude gera o contexto do dia para você não perder o fio amanhã.
 
 ---
-*Claude Code Setup PRO — by Tadeu Rosa · CC BY-NC-ND 4.0*
+*Claude Code Setup — by Tadeu Rosa · CC BY 4.0*

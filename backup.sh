@@ -2,7 +2,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Claude Code Backup — by Tadeu Rosa
 # Versão: 1.3.0
-# Licença: CC BY-NC-ND 4.0 — uso pessoal permitido, redistribuição proibida
+# Licença: MIT — veja o arquivo LICENSE
 # ─────────────────────────────────────────────────────────────────────────────
 # O QUE ESTE SCRIPT FAZ:
 #   Faz backup APENAS dos arquivos do Claude Code (~/.claude/ e ~/claude/).
@@ -1073,5 +1073,5 @@ else
   echo "  4. Restaure com: ${BLUE}bash restore.sh${RESET}"
 fi)
 
-${BOLD}by Tadeu Rosa — CC BY-NC-ND 4.0${RESET}
+${BOLD}by Tadeu Rosa — MIT (scripts) · CC BY 4.0 (skills e textos)${RESET}
 "

@@ -58,4 +58,4 @@ Gera um checklist personalizado para o projeto atual, cobrindo:
 - Não verifica o servidor diretamente
 
 ---
-*Claude Code Setup PRO — by Tadeu Rosa · CC BY-NC-ND 4.0*
+*Claude Code Setup — by Tadeu Rosa · CC BY 4.0*

@@ -2,7 +2,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Claude Code Setup — repair.sh
 # Diagnóstico e recuperação após falha de instalação (queda de luz, Ctrl+C...)
-# by Tadeu Rosa · CC BY-NC-ND 4.0
+# by Tadeu Rosa · MIT (arquivo LICENSE)
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
