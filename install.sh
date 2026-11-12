@@ -223,7 +223,6 @@ DIRS=(
   "$HOME/.claude/hooks/post-tool"
   "$HOME/.claude/hooks/stop"
   "$HOME/.claude/projects"
-  "$HOME/.claude/memory"
   "$HOME/claude"
   "$HOME/claude/projetos/01-ideias"
   "$HOME/claude/projetos/02-prospeccao"
@@ -452,25 +451,6 @@ fi
 
 [[ $SKILLS_INSTALLED -eq 0 ]] && warn "No skills found in package"
 
-# ── Sistema de memória ────────────────────────────────────────────────────────
-section "Memory system"
-
-echo "memory" > "$CHECKPOINT_FILE"
-
-MEMORY_DIR="$HOME/.claude/memory"
-
-if [[ ! -f "$MEMORY_DIR/MEMORY.md" ]]; then
-  write_atomic "$MEMORY_DIR/MEMORY.md" << 'MEMINDEX'
-# MEMORY INDEX
-
-<!-- Each line is a pointer to a memory file -->
-<!-- Format: - [Title](file.md) — short description -->
-MEMINDEX
-  ok "Memory system initialized"
-else
-  ok "Memory system already exists — kept"
-fi
-
 # ── settings.json ─────────────────────────────────────────────────────────────
 section "Settings"
 
@@ -605,7 +585,6 @@ ${BOLD}What was installed:${RESET}
   • CLAUDE.md — persistent instructions for Claude
   • $SKILLS_INSTALLED skill(s) installed
   • Notification when Claude needs you: $NOTIF_STATUS
-  • Persistent memory system
   • settings.json
 ${BACKUP_MSG}
 ${NOTIF_TIP}

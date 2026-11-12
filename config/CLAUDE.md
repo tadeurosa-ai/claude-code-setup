@@ -24,12 +24,11 @@ Meus projetos ficam em `~/claude/projetos/` organizados por status:
 Quando eu disser "salva esse projeto" ou "cria projeto X":
 1. Criar pasta em `~/claude/projetos/<categoria>/<nome>/`
 2. Criar `CLAUDE.md` com contexto do projeto
-3. Registrar em memória
 
-## Sistema de Memória
+## Memória
 
-Memórias ficam em `~/.claude/memory/`.
-Use para registrar: preferências, decisões importantes, contexto de projetos.
+O Claude Code já vem com a memória automática ligada; ela fica em `~/.claude/projects/<projeto>/memory/`.
+O comando `/memory` mostra os arquivos de memória e liga ou desliga a memória automática.
 
 ## Segurança
 
