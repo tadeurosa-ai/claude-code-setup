@@ -75,8 +75,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Funções das skills, comuns ao install.sh e ao repair.sh
 [[ -f "$SCRIPT_DIR/lib/skills-comum.sh" ]] || \
   error "lib/skills-comum.sh not found next to install.sh ($SCRIPT_DIR). Download the whole repository again and run install.sh from it. Nothing was changed."
+# Carrega e confere as 6 funções (arquivo vazio ou cortado não pode passar despercebido)
+_FALTAM=""
 # shellcheck source=lib/skills-comum.sh
-. "$SCRIPT_DIR/lib/skills-comum.sh"
+# (cortado no meio de uma função = erro de sintaxe, que encerraria o script sem explicar: confere antes)
+if "${BASH:-bash}" -n "$SCRIPT_DIR/lib/skills-comum.sh" 2>/dev/null && . "$SCRIPT_DIR/lib/skills-comum.sh"; then :; fi
+for _f in nomes_skill arquivo_skill nome_sobrando do_pacote rodape_no_meio acao_dois_nomes; do
+  declare -F "$_f" >/dev/null || _FALTAM="$_FALTAM $_f"
+done
+[[ -z "$_FALTAM" ]] || \
+  error "lib/skills-comum.sh is incomplete (missing:$_FALTAM) in $SCRIPT_DIR. Download the whole repository again and run install.sh from it. Nothing was changed."
 
 # ── Detecta OS ────────────────────────────────────────────────────────────────
 section "System check"

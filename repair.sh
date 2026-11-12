@@ -47,8 +47,18 @@ if [[ ! -f "$REPAIR_DIR/lib/skills-comum.sh" ]]; then
   bad "lib/skills-comum.sh não encontrado ao lado do repair.sh ($REPAIR_DIR). Baixe o repositório inteiro de novo e rode o repair.sh de dentro dele. Nada foi alterado." >&2
   exit 1
 fi
+# Carrega e confere as 6 funções (arquivo vazio ou cortado não pode passar despercebido)
+_FALTAM=""
 # shellcheck source=lib/skills-comum.sh
-. "$REPAIR_DIR/lib/skills-comum.sh"
+# (cortado no meio de uma função = erro de sintaxe, que encerraria o script sem explicar: confere antes)
+if "${BASH:-bash}" -n "$REPAIR_DIR/lib/skills-comum.sh" 2>/dev/null && . "$REPAIR_DIR/lib/skills-comum.sh"; then :; fi
+for _f in nomes_skill arquivo_skill nome_sobrando do_pacote rodape_no_meio acao_dois_nomes; do
+  declare -F "$_f" >/dev/null || _FALTAM="$_FALTAM $_f"
+done
+if [[ -n "$_FALTAM" ]]; then
+  bad "lib/skills-comum.sh está incompleto (faltam:$_FALTAM) em $REPAIR_DIR. Baixe o repositório inteiro de novo e rode o repair.sh de dentro dele. Nada foi alterado." >&2
+  exit 1
+fi
 
 # ── 1. CHECKPOINT ─────────────────────────────────────────────────────────────
 section "Verificando instalação anterior"
