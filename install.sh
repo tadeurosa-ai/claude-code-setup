@@ -75,8 +75,9 @@ echo -e "  Setting up your professional Claude Code workspace...\n"
 section "System check"
 
 OS="$(uname -s)"
+# Windows: este setup roda no macOS, no Linux e no WSL (que se apresenta como Linux)
 [[ "$OS" == "Darwin" || "$OS" == "Linux" ]] || \
-  { echo -e "${YELLOW}⚠ Windows detected — use Git Bash to run this script.${RESET}"; exit 1; }
+  { echo -e "${YELLOW}⚠ Windows detected — this setup runs on macOS, Linux or WSL. Open your WSL terminal (e.g. Ubuntu) and run the install command there.${RESET}"; exit 1; }
 ok "OS: $OS"
 
 if ! command -v git &>/dev/null; then
@@ -94,42 +95,21 @@ if ! command -v claude &>/dev/null; then
   warn "Claude Code CLI not found — installing automatically..."
   echo ""
 
-  _claude_ok=false
-
-  if command -v npm &>/dev/null; then
-    info "Installing via npm..."
-    npm install -g @anthropic-ai/claude-code 2>/dev/null && _claude_ok=true
-  elif command -v brew &>/dev/null; then
-    info "Installing Node.js via Homebrew (may take 1-2 min)..."
-    brew install node --quiet 2>/dev/null || true
-    command -v npm &>/dev/null && \
-      npm install -g @anthropic-ai/claude-code 2>/dev/null && _claude_ok=true
-  else
-    info "Installing nvm + Node.js (no sudo, ~2-3 min)..."
-    export NVM_DIR="$HOME/.nvm"
-    if curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh 2>/dev/null | bash 2>/dev/null; then
-      [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-      if command -v nvm &>/dev/null 2>&1 || type nvm &>/dev/null 2>&1; then
-        nvm install --lts 2>/dev/null && \
-          npm install -g @anthropic-ai/claude-code 2>/dev/null && _claude_ok=true
-      fi
-    fi
-  fi
-
-  if ! $_claude_ok; then
+  # Instalador oficial (nativo): https://code.claude.com/docs/en/setup
+  # Ele põe o claude em ~/.local/bin; com pipefail, falha no download também conta como erro.
+  info "Installing with the official installer (it shows no progress while it downloads)..."
+  if ! curl -fsSL https://claude.ai/install.sh | bash; then
     echo ""
-    echo -e "${RED}✗ Could not install automatically.${RESET}" >&2
+    echo -e "${RED}✗ Could not install Claude Code automatically.${RESET}" >&2
     echo ""
-    echo -e "  Install manually and run this script again:"
-    echo -e "  1. Go to ${BLUE}https://nodejs.org${RESET} and install Node.js"
-    echo -e "  2. Run: ${BLUE}npm install -g @anthropic-ai/claude-code${RESET}"
-    echo -e "  3. Run this script again"
+    echo -e "  Install it with the official command and run this script again:"
+    echo -e "  ${BLUE}curl -fsSL https://claude.ai/install.sh | bash${RESET}"
+    echo -e "  Help: ${BLUE}https://code.claude.com/docs/en/setup${RESET}"
     exit 1
   fi
+  echo ""
 
-  _NPM_BIN="$(npm prefix -g 2>/dev/null)/bin"
-  [[ -d "$_NPM_BIN" ]] && export PATH="$_NPM_BIN:$PATH"
-  [[ -s "$HOME/.nvm/nvm.sh" ]] && . "$HOME/.nvm/nvm.sh"
+  export PATH="$HOME/.local/bin:$PATH"
 
   if ! command -v claude &>/dev/null; then
     warn "Claude Code installed. Open a new terminal and run this script again."
