@@ -1,5 +1,27 @@
 # Changelog
 
+## Skills com nomes novos (install.sh e repair.sh)
+
+Três skills mudaram de nome, porque o nome antigo era igual ao de um comando do próprio Claude Code (`/debug` e `/context` passavam na frente do comando do Claude Code):
+
+| Antes | Agora |
+|---|---|
+| `/review` | `/revisar-codigo` |
+| `/debug` | `/depurar` |
+| `/context` | `/contexto-projeto` |
+
+O arquivo de cada skill passa a se chamar `SKILL.md`, e cada skill do pacote leva a marca `origem: claude-code-setup` no início do arquivo.
+
+**Se você já tinha as skills instaladas, ao rodar o `install.sh` de novo:**
+- As antigas `review`, `debug` e `context` que vieram deste pacote saem de `~/.claude/skills` e são guardadas em `~/.claude/skills-antigas-setup-<data>/`. Nada é apagado.
+- Uma skill sua com um desses três nomes (que não veio do pacote) fica onde está, e a tela avisa.
+- As outras skills do pacote que ainda têm o arquivo `skill.md` passam a se chamar `SKILL.md`, com o mesmo conteúdo.
+- Uma skill do pacote que você editou continua com a sua edição; a versão nova vai para a subpasta `.example/`.
+- Se você escreveu alguma coisa depois da linha de rodapé de uma skill antiga do pacote, o instalador não mexe nela e mostra na tela como migrar: apagar o que vem depois do rodapé e rodar o instalador de novo.
+- Arquivos seus com conteúdo nunca são movidos nem renomeados. Um arquivo de skill vazio (0 bytes) numa pasta do pacote é tratado como quebrado e trocado pela versão do pacote; se ele estiver ao lado de um arquivo com conteúdo, é guardado na pasta de antigas.
+
+O `repair.sh` confere os mesmos casos e só manda rodar o instalador de novo quando ele resolve.
+
 ## backup.sh e restore.sh 1.3.0
 
 > ⚠️ **Atualize o restore antes de restaurar um backup novo.** Um backup feito com o `backup.sh` 1.3.0 precisa do `restore.sh` 1.3.0 ou mais novo. O `restore.sh` antigo (1.1.0) restaura esse backup sem dar erro, mas deixa vazias as chaves do `env` no `settings.json`, sem avisar. Antes de restaurar, baixe o repositório de novo (`git pull`) e confira a versão na 4ª linha do `restore.sh` (`# Versão: 1.3.0`).
