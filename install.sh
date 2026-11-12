@@ -91,9 +91,21 @@ if [[ "$_DISK_FREE" -lt 100 ]] 2>/dev/null; then
 fi
 ok "Disk: ${_DISK_FREE}MB free"
 
+# ~/.local/bin (onde o instalador oficial põe o claude) já estava no caminho? Medido aqui,
+# ANTES de o script acrescentar a pasta. Se não estava, o fim da tela diz como pôr.
+LOCALBIN_JA_ESTAVA=false
+case ":$PATH:" in *":$HOME/.local/bin:"*|*":$HOME/.local/bin/:"*) LOCALBIN_JA_ESTAVA=true ;; esac
+PATH_TIP=""
+
 if ! command -v claude &>/dev/null; then
   warn "Claude Code CLI not found — installing automatically..."
   echo ""
+
+  if ! command -v curl &>/dev/null; then
+    echo -e "${RED}✗ curl not found — the official Claude Code installer needs it.${RESET}" >&2
+    echo -e "  Install curl and run this script again (Ubuntu/Debian: ${BLUE}sudo apt install curl${RESET})."
+    exit 1
+  fi
 
   # Instalador oficial (nativo): https://code.claude.com/docs/en/setup
   # Ele põe o claude em ~/.local/bin; com pipefail, falha no download também conta como erro.
@@ -112,11 +124,48 @@ if ! command -v claude &>/dev/null; then
   export PATH="$HOME/.local/bin:$PATH"
 
   if ! command -v claude &>/dev/null; then
-    warn "Claude Code installed. Open a new terminal and run this script again."
-    exit 0
+    echo -e "${RED}✗ The official installer finished, but claude was not found in ~/.local/bin.${RESET}" >&2
+    echo -e "  Help: ${BLUE}https://code.claude.com/docs/en/troubleshoot-install${RESET}"
+    exit 1
+  fi
+
+  # Instalado em ~/.local/bin, que não estava no caminho: o comando certo para o terminal da pessoa
+  # (doc oficial, "Verify your PATH"). O script não mexe nos arquivos do terminal.
+  if ! $LOCALBIN_JA_ESTAVA && [[ "$(command -v claude)" == "$HOME/.local/bin/claude" ]]; then
+    _rc=""
+    case "$(basename "${SHELL:-}")" in
+      zsh) _rc="~/.zshrc" ;;
+      bash)
+        if [[ "$OS" == "Darwin" ]]; then   # Terminal do Mac abre o bash como login: lê o 1º que existir
+          if [[ -f "$HOME/.bash_profile" ]]; then _rc="~/.bash_profile"
+          elif [[ -f "$HOME/.bash_login" ]]; then _rc="~/.bash_login"
+          elif [[ -f "$HOME/.profile" ]]; then _rc="~/.profile"
+          else _rc="~/.bash_profile"; fi
+        else
+          _rc="~/.bashrc"
+        fi ;;
+    esac
+    if [[ -n "$_rc" ]]; then
+      PATH_TIP="${BOLD}Before opening Claude Code:${RESET} the folder it was installed in (~/.local/bin) is not in your terminal's PATH. Run this once:
+  ${BLUE}echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> $_rc${RESET}
+  Then open a new terminal window.
+"
+    else
+      PATH_TIP="${BOLD}Before opening Claude Code:${RESET} the folder it was installed in (~/.local/bin) is not in your terminal's PATH.
+  Add it in your shell's configuration (see ${BLUE}https://code.claude.com/docs/en/troubleshoot-install#verify-your-path${RESET}),
+  then open a new terminal window.
+"
+    fi
   fi
 fi
-ok "Claude Code: $(claude --version 2>/dev/null | head -1 || echo 'ok')"
+
+# claude achado mas sem responder à versão: para aqui, em vez de seguir até "installed successfully"
+if ! _CLAUDE_VER="$(claude --version 2>/dev/null | head -1)" || [[ -z "$_CLAUDE_VER" ]]; then
+  echo -e "${RED}✗ Claude Code was found ($(command -v claude)) but 'claude --version' did not answer.${RESET}" >&2
+  echo -e "  Help: ${BLUE}https://code.claude.com/docs/en/troubleshoot-install${RESET}"
+  exit 1
+fi
+ok "Claude Code: $_CLAUDE_VER"
 
 CHECKPOINT_FILE="$HOME/.claude-install-checkpoint"
 
@@ -560,6 +609,7 @@ ${BOLD}What was installed:${RESET}
   • settings.json
 ${BACKUP_MSG}
 ${NOTIF_TIP}
+${PATH_TIP}
 ${BOLD}Next steps:${RESET}
   1. Open Claude Code:    ${BLUE}claude${RESET}
   2. Test:                ${BLUE}/daily${RESET}  ${BLUE}/revisar-codigo${RESET}  ${BLUE}/standup${RESET}
