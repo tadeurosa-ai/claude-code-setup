@@ -1,5 +1,12 @@
 # Changelog
 
+## Instalação do Claude Code pelo instalador oficial (install.sh)
+
+- Quando o Claude Code não está instalado, o `install.sh` usa o instalador oficial (`curl -fsSL https://claude.ai/install.sh | bash`). Não instala mais por npm, Homebrew nem nvm.
+- O instalador oficial põe o Claude Code em `~/.local/bin`. Se essa pasta ainda não está no caminho do seu terminal, o fim da tela mostra o comando para acrescentá-la no arquivo do seu terminal (zsh: `~/.zshrc`; bash no Linux: `~/.bashrc`; bash no Mac: `~/.bash_profile`) e pede para abrir um terminal novo. O script não mexe nesses arquivos.
+- O setup para e mostra o que fazer quando: falta o `curl` (diz como instalar); o instalador falha (mostra o comando oficial e o link da documentação); o instalador termina mas o Claude Code não aparece, ou o Claude Code não responde a `claude --version` (mostra o link da página de ajuda).
+- Windows: o setup roda no macOS, no Linux e no WSL. No Windows, abra o terminal do WSL (por exemplo, Ubuntu) e rode o comando de instalação lá.
+
 ## Skills com nomes novos (install.sh e repair.sh)
 
 Três skills mudaram de nome, porque o nome antigo era igual ao de um comando do próprio Claude Code (`/debug` e `/context` passavam na frente do comando do Claude Code):

@@ -75,8 +75,9 @@ echo -e "  Setting up your professional Claude Code workspace...\n"
 section "System check"
 
 OS="$(uname -s)"
+# Windows: este setup roda no macOS, no Linux e no WSL (que se apresenta como Linux)
 [[ "$OS" == "Darwin" || "$OS" == "Linux" ]] || \
-  { echo -e "${YELLOW}⚠ Windows detected — use Git Bash to run this script.${RESET}"; exit 1; }
+  { echo -e "${YELLOW}⚠ Windows detected — this setup runs on macOS, Linux or WSL. Open your WSL terminal (e.g. Ubuntu) and run the install command there.${RESET}"; exit 1; }
 ok "OS: $OS"
 
 if ! command -v git &>/dev/null; then
@@ -90,53 +91,81 @@ if [[ "$_DISK_FREE" -lt 100 ]] 2>/dev/null; then
 fi
 ok "Disk: ${_DISK_FREE}MB free"
 
+# ~/.local/bin (onde o instalador oficial põe o claude) já estava no caminho? Medido aqui,
+# ANTES de o script acrescentar a pasta. Se não estava, o fim da tela diz como pôr.
+LOCALBIN_JA_ESTAVA=false
+case ":$PATH:" in *":$HOME/.local/bin:"*|*":$HOME/.local/bin/:"*) LOCALBIN_JA_ESTAVA=true ;; esac
+PATH_TIP=""
+
 if ! command -v claude &>/dev/null; then
   warn "Claude Code CLI not found — installing automatically..."
   echo ""
 
-  _claude_ok=false
-
-  if command -v npm &>/dev/null; then
-    info "Installing via npm..."
-    npm install -g @anthropic-ai/claude-code 2>/dev/null && _claude_ok=true
-  elif command -v brew &>/dev/null; then
-    info "Installing Node.js via Homebrew (may take 1-2 min)..."
-    brew install node --quiet 2>/dev/null || true
-    command -v npm &>/dev/null && \
-      npm install -g @anthropic-ai/claude-code 2>/dev/null && _claude_ok=true
-  else
-    info "Installing nvm + Node.js (no sudo, ~2-3 min)..."
-    export NVM_DIR="$HOME/.nvm"
-    if curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh 2>/dev/null | bash 2>/dev/null; then
-      [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-      if command -v nvm &>/dev/null 2>&1 || type nvm &>/dev/null 2>&1; then
-        nvm install --lts 2>/dev/null && \
-          npm install -g @anthropic-ai/claude-code 2>/dev/null && _claude_ok=true
-      fi
-    fi
-  fi
-
-  if ! $_claude_ok; then
-    echo ""
-    echo -e "${RED}✗ Could not install automatically.${RESET}" >&2
-    echo ""
-    echo -e "  Install manually and run this script again:"
-    echo -e "  1. Go to ${BLUE}https://nodejs.org${RESET} and install Node.js"
-    echo -e "  2. Run: ${BLUE}npm install -g @anthropic-ai/claude-code${RESET}"
-    echo -e "  3. Run this script again"
+  if ! command -v curl &>/dev/null; then
+    echo -e "${RED}✗ curl not found — the official Claude Code installer needs it.${RESET}" >&2
+    echo -e "  Install curl and run this script again (Ubuntu/Debian: ${BLUE}sudo apt install curl${RESET})."
     exit 1
   fi
 
-  _NPM_BIN="$(npm prefix -g 2>/dev/null)/bin"
-  [[ -d "$_NPM_BIN" ]] && export PATH="$_NPM_BIN:$PATH"
-  [[ -s "$HOME/.nvm/nvm.sh" ]] && . "$HOME/.nvm/nvm.sh"
+  # Instalador oficial (nativo): https://code.claude.com/docs/en/setup
+  # Ele põe o claude em ~/.local/bin; com pipefail, falha no download também conta como erro.
+  info "Installing with the official installer (it shows no progress while it downloads)..."
+  if ! curl -fsSL https://claude.ai/install.sh | bash; then
+    echo ""
+    echo -e "${RED}✗ Could not install Claude Code automatically.${RESET}" >&2
+    echo ""
+    echo -e "  Install it with the official command and run this script again:"
+    echo -e "  ${BLUE}curl -fsSL https://claude.ai/install.sh | bash${RESET}"
+    echo -e "  Help: ${BLUE}https://code.claude.com/docs/en/setup${RESET}"
+    exit 1
+  fi
+  echo ""
+
+  export PATH="$HOME/.local/bin:$PATH"
 
   if ! command -v claude &>/dev/null; then
-    warn "Claude Code installed. Open a new terminal and run this script again."
-    exit 0
+    echo -e "${RED}✗ The official installer finished, but claude was not found in ~/.local/bin.${RESET}" >&2
+    echo -e "  Help: ${BLUE}https://code.claude.com/docs/en/troubleshoot-install${RESET}"
+    exit 1
+  fi
+
+  # Instalado em ~/.local/bin, que não estava no caminho: o comando certo para o terminal da pessoa
+  # (doc oficial, "Verify your PATH"). O script não mexe nos arquivos do terminal.
+  if ! $LOCALBIN_JA_ESTAVA && [[ "$(command -v claude)" == "$HOME/.local/bin/claude" ]]; then
+    _rc=""
+    case "$(basename "${SHELL:-}")" in
+      zsh) _rc="~/.zshrc" ;;
+      bash)
+        if [[ "$OS" == "Darwin" ]]; then   # Terminal do Mac abre o bash como login: lê o 1º que existir
+          if [[ -f "$HOME/.bash_profile" ]]; then _rc="~/.bash_profile"
+          elif [[ -f "$HOME/.bash_login" ]]; then _rc="~/.bash_login"
+          elif [[ -f "$HOME/.profile" ]]; then _rc="~/.profile"
+          else _rc="~/.bash_profile"; fi
+        else
+          _rc="~/.bashrc"
+        fi ;;
+    esac
+    if [[ -n "$_rc" ]]; then
+      PATH_TIP="${BOLD}Before opening Claude Code:${RESET} the folder it was installed in (~/.local/bin) is not in your terminal's PATH. Run this once:
+  ${BLUE}echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> $_rc${RESET}
+  Then open a new terminal window.
+"
+    else
+      PATH_TIP="${BOLD}Before opening Claude Code:${RESET} the folder it was installed in (~/.local/bin) is not in your terminal's PATH.
+  Add it in your shell's configuration (see ${BLUE}https://code.claude.com/docs/en/troubleshoot-install#verify-your-path${RESET}),
+  then open a new terminal window.
+"
+    fi
   fi
 fi
-ok "Claude Code: $(claude --version 2>/dev/null | head -1 || echo 'ok')"
+
+# claude achado mas sem responder à versão: para aqui, em vez de seguir até "installed successfully"
+if ! _CLAUDE_VER="$(claude --version 2>/dev/null | head -1)" || [[ -z "$_CLAUDE_VER" ]]; then
+  echo -e "${RED}✗ Claude Code was found ($(command -v claude)) but 'claude --version' did not answer.${RESET}" >&2
+  echo -e "  Help: ${BLUE}https://code.claude.com/docs/en/troubleshoot-install${RESET}"
+  exit 1
+fi
+ok "Claude Code: $_CLAUDE_VER"
 
 CHECKPOINT_FILE="$HOME/.claude-install-checkpoint"
 
@@ -580,6 +609,7 @@ ${BOLD}What was installed:${RESET}
   • settings.json
 ${BACKUP_MSG}
 ${NOTIF_TIP}
+${PATH_TIP}
 ${BOLD}Next steps:${RESET}
   1. Open Claude Code:    ${BLUE}claude${RESET}
   2. Test:                ${BLUE}/daily${RESET}  ${BLUE}/revisar-codigo${RESET}  ${BLUE}/standup${RESET}
