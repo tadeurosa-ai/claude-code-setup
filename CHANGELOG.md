@@ -1,5 +1,11 @@
 # Changelog
 
+## Restore 1.3.1: nada fora de ~/.claude e ~/claude sem você confirmar
+
+- Atalhos que vêm dentro do backup e apontam para fora de `~/.claude` e `~/claude` não são restaurados; a tela lista cada um. Antes, um backup adulterado podia fazer o restore gravar num arquivo de fora, inclusive com o valor das suas chaves.
+- Atalho de `~/.claude` para uma pasta fora dessas duas (ex.: `~/.claude/skills` → `~/shared-skills`) agora sempre pergunta antes, mesmo quando a pasta ainda não existe. Se responder não, o conteúdo volta como pasta comum dentro de `~/.claude`.
+- Só recupere backups que você mesmo fez ou de onde só você grava.
+
 ## Licença: MIT nos scripts e CC BY 4.0 nas skills e textos
 
 - A partir desta versão, os scripts (`install.sh`, `repair.sh`, `backup.sh`, `restore.sh`, `lib/` e `config/settings.json`) ficam sob a licença MIT (arquivo `LICENSE`). As skills e os textos (`skills/`, `config/CLAUDE.md`, `demo.gif`, README e CHANGELOG) ficam sob a CC BY 4.0 (arquivo `CC-BY-4.0.txt`). Antes, tudo era CC BY-NC-ND 4.0.
