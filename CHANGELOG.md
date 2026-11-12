@@ -1,5 +1,12 @@
 # Changelog
 
+## Memória: a memória automática do próprio Claude Code (install.sh e modelo do CLAUDE.md)
+
+- O instalador não cria mais `~/.claude/memory/`. O Claude Code já vem com a memória automática ligada; ela fica em `~/.claude/projects/<projeto>/memory/`, e o comando `/memory` mostra os arquivos de memória e liga ou desliga a memória automática.
+- Se você já tem `~/.claude/memory/`, ela continua como está: o instalador não mexe nela.
+- Se você já tem `~/.claude/CLAUDE.md`, ele não é alterado e continua citando `~/.claude/memory/`. O modelo novo fica em `~/.claude/CLAUDE.md.example`: compare os dois e, se quiser, troque a seção antiga de memória pela seção "Memória" do modelo novo.
+- O README ainda cita `~/.claude/memory/`; ele será atualizado.
+
 ## Instalação do Claude Code pelo instalador oficial (install.sh)
 
 - Quando o Claude Code não está instalado, o `install.sh` usa o instalador oficial (`curl -fsSL https://claude.ai/install.sh | bash`). Não instala mais por npm, Homebrew nem nvm.
