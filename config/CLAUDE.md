@@ -1,4 +1,4 @@
-# Meu Setup Claude Code PRO
+# Meu Setup Claude Code
 
 Bem-vindo ao seu ambiente profissional do Claude Code.
 Este arquivo define como o Claude se comporta no seu dia a dia.

@@ -61,4 +61,4 @@ Analisa as mudanças no branch atual e produz:
 | `chore` | Build, dependências, configs |
 
 ---
-*Claude Code Setup PRO — by Tadeu Rosa · CC BY-NC-ND 4.0*
+*Claude Code Setup — by Tadeu Rosa · CC BY 4.0*

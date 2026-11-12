@@ -56,4 +56,4 @@ Gera um relatório quinzenal (ou semanal) com:
 Use junto com `/standup cliente` para comunicação diária e `/client-report` para comunicação formal quinzenal.
 
 ---
-*Claude Code Setup PRO — by Tadeu Rosa · CC BY-NC-ND 4.0*
+*Claude Code Setup — by Tadeu Rosa · CC BY 4.0*

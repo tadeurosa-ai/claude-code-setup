@@ -541,6 +541,6 @@ ${BOLD}Next steps:${RESET}
   2. Test:                ${BLUE}/daily${RESET}  ${BLUE}/revisar-codigo${RESET}  ${BLUE}/standup${RESET}
   3. If something breaks: ${BLUE}bash repair.sh${RESET}
 
-${BOLD}by Tadeu Rosa — CC BY-NC-ND 4.0${RESET}
+${BOLD}by Tadeu Rosa — MIT (scripts) · CC BY 4.0 (skills e textos)${RESET}
   github.com/tadeurosa-ai/claude-code-setup
 "

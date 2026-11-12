@@ -58,4 +58,4 @@ Gera e salva um arquivo de contexto com:
 Use `/contexto-projeto` no final de cada sessão longa. Na próxima sessão, comece com `/contexto-projeto carregar` — o Claude retoma exatamente de onde parou.
 
 ---
-*Claude Code Setup PRO — by Tadeu Rosa · CC BY-NC-ND 4.0*
+*Claude Code Setup — by Tadeu Rosa · CC BY 4.0*
