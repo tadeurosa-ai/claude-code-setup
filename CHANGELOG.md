@@ -2,7 +2,7 @@
 
 ## Licença: MIT nos scripts e CC BY 4.0 nas skills e textos
 
-- A partir desta versão, os scripts (`install.sh`, `repair.sh`, `backup.sh`, `restore.sh`, `lib/` e `config/settings.json`) ficam sob a licença MIT (arquivo `LICENSE`). As skills e os textos (`skills/`, `config/CLAUDE.md`, `demo.gif`, README e CHANGELOG) ficam sob a CC BY 4.0 (arquivo `LICENSE-docs`). Antes, tudo era CC BY-NC-ND 4.0.
+- A partir desta versão, os scripts (`install.sh`, `repair.sh`, `backup.sh`, `restore.sh`, `lib/` e `config/settings.json`) ficam sob a licença MIT (arquivo `LICENSE`). As skills e os textos (`skills/`, `config/CLAUDE.md`, `demo.gif`, README e CHANGELOG) ficam sob a CC BY 4.0 (arquivo `CC-BY-4.0.txt`). Antes, tudo era CC BY-NC-ND 4.0.
 - As skills não têm mais a marca "PRO": o rodapé novo é "*Claude Code Setup — by Tadeu Rosa · CC BY 4.0*", e "Dica PRO" virou "Dica".
 - Se você já instalou, as suas skills não são alteradas e continuam com o rodapé antigo; a versão nova de cada uma fica na pasta `.example/` dentro da pasta da skill. O instalador continua reconhecendo os rodapés antigos.
 
