@@ -236,6 +236,169 @@ echo "skills" > "$CHECKPOINT_FILE"
 
 SKILLS_INSTALLED=0
 
+# Nomes reais (como estão gravados no disco) dos arquivos de skill da pasta: SKILL.md
+# e/ou o skill.md antigo. Em ordem fixa, que não depende do idioma do sistema.
+nomes_skill() {
+  local f
+  for f in "$1"/*; do
+    [[ -f "$f" ]] || continue
+    case "$(basename "$f" | LC_ALL=C tr '[:upper:]' '[:lower:]')" in
+      skill.md) basename "$f" ;;
+    esac
+  done | LC_ALL=C sort
+}
+
+# O arquivo que vale: SKILL.md com esse nome exato, se existir; senão o antigo
+arquivo_skill() {
+  local n
+  n="$(nomes_skill "$1")"
+  [[ -n "$n" ]] || return 1
+  if printf '%s\n' "$n" | grep -qx 'SKILL.md'; then
+    printf '%s/SKILL.md' "$1"
+  else
+    printf '%s/%s' "$1" "$(printf '%s\n' "$n" | head -1)"
+  fi
+}
+
+# O OUTRO nome, quando a pasta tem os dois (só acontece em disco que diferencia maiúscula)
+nome_sobrando() {
+  local n
+  n="$(nomes_skill "$1")"
+  printf '%s\n' "$n" | grep -qx 'SKILL.md' || return 1
+  n="$(printf '%s\n' "$n" | grep -vx 'SKILL.md' | grep -v '^$' | head -1)"
+  [[ -n "$n" ]] || return 1
+  printf '%s' "$n"
+}
+
+# Skill instalada por este pacote: marca no frontmatter, ou o rodapé das versões antigas
+# — e o rodapé só conta quando é a última linha COM TEXTO do arquivo (PRO; a Lite, 1º release, só
+# pelo texto exato). Rodapé citado no meio do texto não marca nada.
+do_pacote() {
+  local ult
+  grep -q '^  origem: claude-code-setup$' "$1" 2>/dev/null && return 0
+  ult="$(awk 'NF { l = $0 } END { print l }' "$1" 2>/dev/null)" || return 1   # última linha COM TEXTO
+  case "$ult" in *'Claude Code Setup PRO — by Tadeu Rosa'*) return 0 ;; esac
+  [[ "$ult" == '*Claude Code Setup Lite — by Tadeu Rosa · CC BY-NC-ND 4.0*' ]]
+}
+
+# Rodapé do pacote como linha inteira, mas que NÃO é a última linha com texto: parece skill
+# do pacote editada depois do rodapé. O instalador não mexe; só avisa (o repair.sh também).
+rodape_no_meio() {
+  do_pacote "$1" && return 1
+  LC_ALL=C grep -qxF -e '*Claude Code Setup PRO — by Tadeu Rosa · CC BY-NC-ND 4.0*' \
+    -e '*Claude Code Setup Lite — by Tadeu Rosa · CC BY-NC-ND 4.0*' "$1" 2>/dev/null
+}
+
+# Pasta com skill.md e SKILL.md juntos (só em disco que diferencia maiúscula).
+# Nunca mexe em arquivo do usuário:
+#  • skill.md do pacote + SKILL.md com conteúdo → guardar o skill.md;
+#  • skill.md do pacote com conteúdo + SKILL.md vazio, numa das 11 pastas do pacote →
+#    renomear (o vazio é guardado e o skill.md vira SKILL.md: o que estava nele continua em uso);
+#  • qualquer outro caso → manter (nada muda).
+acao_dois_nomes() {  # acao_dois_nomes <pasta> <pasta do pacote: sim|nao> <outro nome>
+  if do_pacote "$1/$3"; then
+    if [[ -s "$1/SKILL.md" ]]; then echo guardar; return 0; fi
+    if [[ "$2" == sim && -s "$1/$3" ]]; then echo renomear; return 0; fi
+  fi
+  echo manter
+}
+
+# Guarda (nunca apaga) o que sai de ~/.claude/skills numa pasta única desta instalação
+SKILLS_ANTIGAS=""; GUARDADO=""
+# (chamar direto, nunca dentro de $( ): a pasta é criada uma vez e vale para a instalação toda)
+guardar_antiga() {  # guardar_antiga <caminho> <nome dentro da pasta de antigas> → GUARDADO
+  local dest n=2
+  if [[ -z "$SKILLS_ANTIGAS" ]]; then
+    local base="$HOME/.claude/skills-antigas-setup-$(date +%Y%m%d-%H%M%S)"
+    SKILLS_ANTIGAS="$base"
+    while [[ -e "$SKILLS_ANTIGAS" || -L "$SKILLS_ANTIGAS" ]]; do SKILLS_ANTIGAS="$base-$n"; n=$((n+1)); done
+    mkdir -p "$SKILLS_ANTIGAS"
+  fi
+  dest="$SKILLS_ANTIGAS/$2"; n=2
+  while [[ -e "$dest" || -L "$dest" ]]; do dest="$SKILLS_ANTIGAS/$2-$n"; n=$((n+1)); done
+  mkdir -p "$(dirname "$dest")"
+  mv "$1" "$dest" && GUARDADO="${dest#$HOME/}"
+}
+
+# Deixa a pasta com um só arquivo de skill, chamado SKILL.md, sem mexer no que é do usuário:
+#  • renomeação interrompida (.SKILL.md.renomeando): termina; se já há SKILL.md, guarda;
+#  • skill.md e SKILL.md juntos: ver acao_dois_nomes;
+#  • só skill.md: do pacote (ou vazio) vira SKILL.md em dois passos (o Mac não diferencia
+#    maiúscula); do usuário não é mexido.
+avisar_editada() {  # avisar_editada <pasta> <arquivo>
+  rodape_no_meio "$2" && warn "Skill '$(basename "$1")' looks like it came from this package and was edited after the footer — not migrated. To migrate it, delete what comes after the footer line in ~/${2#$HOME/} and run the installer again."
+  return 0
+}
+
+dois_nomes() {  # dois_nomes <pasta> <pasta do pacote: sim|nao> <outro nome>
+  local d="$1" rel="${1#$HOME/}" sub="${1#$HOME/.claude/skills/}"
+  case "$(acao_dois_nomes "$d" "$2" "$3")" in
+    guardar)
+      guardar_antiga "$d/$3" "$sub/$3" \
+        && warn "Old ~/$rel/$3 (from this package) moved to ~/$GUARDADO — the folder keeps SKILL.md." ;;
+    renomear)
+      guardar_antiga "$d/SKILL.md" "$sub/SKILL.md.vazio" \
+        && mv "$d/$3" "$d/.SKILL.md.renomeando" && mv "$d/.SKILL.md.renomeando" "$d/SKILL.md" \
+        && warn "Empty ~/$rel/SKILL.md moved to ~/$GUARDADO; ~/$rel/$3 is now SKILL.md." ;;
+    *)
+      warn "~/$rel/$3 and ~/$rel/SKILL.md both exist — kept as is. Claude Code reads SKILL.md."
+      avisar_editada "$d" "$d/$3" ;;
+  esac
+}
+
+para_SKILL() {
+  local d="$1" rel="${1#$HOME/}" f outro
+  if [[ -f "$d/.SKILL.md.renomeando" ]]; then
+    if arquivo_skill "$d" >/dev/null; then
+      guardar_antiga "$d/.SKILL.md.renomeando" "${d#$HOME/.claude/skills/}/skill.md.interrompido" \
+        && warn "Interrupted rename in ~/$rel: that copy was kept at ~/$GUARDADO"
+    else
+      mv "$d/.SKILL.md.renomeando" "$d/SKILL.md"
+    fi
+  fi
+  if outro="$(nome_sobrando "$d")"; then
+    dois_nomes "$d" "${2:-sim}" "$outro"
+    return 0
+  fi
+  f="$(arquivo_skill "$d")" || return 0
+  [[ "$(basename "$f")" == "SKILL.md" ]] && return 0
+  if do_pacote "$f" || [[ ! -s "$f" ]]; then
+    mv "$f" "$d/.SKILL.md.renomeando" && mv "$d/.SKILL.md.renomeando" "$d/SKILL.md"
+  else
+    avisar_editada "$d" "$f"
+  fi
+}
+
+# /review, /debug e /context das versões antigas tinham nomes de comandos do Claude Code.
+# As do pacote saem de ~/.claude/skills (guardadas, nunca apagadas); as do usuário ficam.
+for velho in review debug context; do
+  d="$HOME/.claude/skills/$velho"
+  [[ -d "$d" && ! -L "$d" ]] || continue
+  f="$(arquivo_skill "$d")" || continue
+  if do_pacote "$f"; then
+    guardar_antiga "$d" "$velho" && warn "Old skill /$velho moved to ~/$GUARDADO"
+  elif rodape_no_meio "$f"; then
+    avisar_editada "$d" "$f"
+  elif [[ "$velho" == review ]]; then
+    warn "Skill 'review' is yours (not from this package) — kept. Note: it may conflict with Claude Code's own /review."
+  else
+    warn "Skill '$velho' is yours (not from this package) — kept. Note: it replaces the built-in /$velho command."
+  fi
+done
+# Fora das 11 pastas do pacote: só sai um skill.md reconhecido como do pacote quando já há
+# um SKILL.md com conteúdo na mesma pasta. Nada mais é movido, renomeado ou trocado.
+for d in "$HOME/.claude/skills"/*/; do
+  d="${d%/}"
+  [[ -d "$d" && ! -L "$d" ]] || continue
+  [[ -d "$SCRIPT_DIR/skills/$(basename "$d")" ]] && continue
+  outro="$(nome_sobrando "$d")" || continue
+  dois_nomes "$d" nao "$outro"
+done
+
+if [[ -n "$SKILLS_ANTIGAS" ]]; then
+  info "New names: /revisar-codigo (was /review), /depurar (was /debug), /contexto-projeto (was /context)."
+fi
+
 if [[ -d "$SCRIPT_DIR/skills" ]]; then
   for skill_dir in "$SCRIPT_DIR/skills"/*/; do
     [[ -d "$skill_dir" ]] || continue
@@ -243,9 +406,11 @@ if [[ -d "$SCRIPT_DIR/skills" ]]; then
     dest="$HOME/.claude/skills/$skill_name"
     mkdir -p "$dest"
 
-    existing="$dest/skill.md"
-    if [[ -f "$existing" ]] && [[ -s "$existing" ]]; then
+    para_SKILL "$dest"
+    existing="$(arquivo_skill "$dest")" || existing=""
+    if [[ -n "$existing" ]] && { [[ -s "$existing" ]] || nome_sobrando "$dest" >/dev/null; }; then
       mkdir -p "$dest/.example"
+      para_SKILL "$dest/.example"
       cp -r "${skill_dir}." "$dest/.example/"
       warn "Skill '$skill_name' already exists — reference saved to .example/"
     else
@@ -417,7 +582,7 @@ ${BACKUP_MSG}
 ${NOTIF_TIP}
 ${BOLD}Next steps:${RESET}
   1. Open Claude Code:    ${BLUE}claude${RESET}
-  2. Test:                ${BLUE}/daily${RESET}  ${BLUE}/review${RESET}  ${BLUE}/standup${RESET}
+  2. Test:                ${BLUE}/daily${RESET}  ${BLUE}/revisar-codigo${RESET}  ${BLUE}/standup${RESET}
   3. If something breaks: ${BLUE}bash repair.sh${RESET}
 
 ${BOLD}by Tadeu Rosa — CC BY-NC-ND 4.0${RESET}

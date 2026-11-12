@@ -1,3 +1,9 @@
+---
+name: client-report
+description: "Converte o trabalho técnico em linguagem de negócio para o cliente."
+metadata:
+  origem: claude-code-setup
+---
 # /client-report — Relatório para Cliente
 
 Converte o trabalho técnico em linguagem de negócio para o cliente.

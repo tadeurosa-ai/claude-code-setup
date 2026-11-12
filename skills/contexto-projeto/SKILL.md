@@ -1,4 +1,10 @@
-# /context — Captura de Contexto do Projeto
+---
+name: contexto-projeto
+description: "Salva o estado atual do projeto para retomar em uma nova sessão sem perder o fio."
+metadata:
+  origem: claude-code-setup
+---
+# /contexto-projeto — Captura de Contexto do Projeto
 
 Salva o estado atual do projeto para retomar em uma nova sessão sem perder o fio.
 
@@ -14,9 +20,9 @@ Gera e salva um arquivo de contexto com:
 ## Uso
 
 ```
-/context              ← salva contexto do projeto atual
-/context carregar     ← carrega o contexto salvo na sessão atual
-/context mostrar      ← exibe o contexto sem salvar
+/contexto-projeto              ← salva contexto do projeto atual
+/contexto-projeto carregar     ← carrega o contexto salvo na sessão atual
+/contexto-projeto mostrar      ← exibe o contexto sem salvar
 ```
 
 ## Onde é salvo
@@ -49,7 +55,7 @@ Gera e salva um arquivo de contexto com:
 
 ## Dica
 
-Use `/context` no final de cada sessão longa. Na próxima sessão, comece com `/context carregar` — o Claude retoma exatamente de onde parou.
+Use `/contexto-projeto` no final de cada sessão longa. Na próxima sessão, comece com `/contexto-projeto carregar` — o Claude retoma exatamente de onde parou.
 
 ---
 *Claude Code Setup PRO — by Tadeu Rosa · CC BY-NC-ND 4.0*

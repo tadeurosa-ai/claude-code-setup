@@ -1,3 +1,9 @@
+---
+name: estimate
+description: "Quebra uma tarefa em subtarefas com estimativas realistas."
+metadata:
+  origem: claude-code-setup
+---
 # /estimate — Estimativa de Tempo
 
 Quebra uma tarefa em subtarefas com estimativas realistas.

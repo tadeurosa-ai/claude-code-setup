@@ -1,3 +1,9 @@
+---
+name: standup
+description: "Gera um update profissional pronto para enviar ao cliente ou equipe."
+metadata:
+  origem: claude-code-setup
+---
 # /standup — Update de Status para Cliente
 
 Gera um update profissional pronto para enviar ao cliente ou equipe.

@@ -1,3 +1,9 @@
+---
+name: daily
+description: "Gera um resumo estruturado do dia de trabalho."
+metadata:
+  origem: claude-code-setup
+---
 # /daily — Resumo do Dia
 
 Gera um resumo estruturado do dia de trabalho.

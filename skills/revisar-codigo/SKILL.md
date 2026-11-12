@@ -1,4 +1,10 @@
-# /review — Revisão de Código
+---
+name: revisar-codigo
+description: "Revisa código com foco em segurança, qualidade e boas práticas."
+metadata:
+  origem: claude-code-setup
+---
+# /revisar-codigo — Revisão de Código
 
 Revisa código com foco em segurança, qualidade e boas práticas.
 
@@ -14,10 +20,10 @@ Analisa o código atual ou o arquivo indicado e aponta:
 ## Uso
 
 ```
-/review                    ← revisa arquivos modificados
-/review src/auth.ts        ← revisa arquivo específico
-/review --security-only    ← foco só em segurança
-/review --quick            ← revisão rápida, só críticos
+/revisar-codigo                    ← revisa arquivos modificados
+/revisar-codigo src/auth.ts        ← revisa arquivo específico
+/revisar-codigo --security-only    ← foco só em segurança
+/revisar-codigo --quick            ← revisão rápida, só críticos
 ```
 
 ## Severidade dos achados
