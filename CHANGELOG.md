@@ -1,5 +1,11 @@
 # Changelog
 
+## Funções das skills num arquivo só (install.sh e repair.sh)
+
+- As funções que o `install.sh` e o `repair.sh` usam para reconhecer e migrar as skills agora ficam em `lib/skills-comum.sh`. O que os dois fazem não muda.
+- Os dois precisam do repositório inteiro. O `repair.sh` copiado sozinho para outra pasta não roda mais: ele para com uma mensagem e não mexe em nada. Rodar o `install.sh` por um atalho para o arquivo também para; antes, terminava dizendo "installed successfully" sem instalar as skills.
+- Se `lib/skills-comum.sh` estiver faltando ou incompleto, os dois param com uma mensagem clara, antes de mudar qualquer coisa.
+
 ## Memória: a memória automática do próprio Claude Code (install.sh e modelo do CLAUDE.md)
 
 - O instalador não cria mais `~/.claude/memory/`. O Claude Code já vem com a memória automática ligada; ela fica em `~/.claude/projects/<projeto>/memory/`, e o comando `/memory` mostra os arquivos de memória e liga ou desliga a memória automática.
